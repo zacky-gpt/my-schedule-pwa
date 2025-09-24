@@ -1,0 +1,87 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>工程逆算くん</title>
+
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="theme-color" content="#ffffff">
+
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto;max-width:720px;margin:16px auto;padding:0 12px;line-height:1.6}
+h1{font-size:1.2rem;margin:0 0 8px}
+section{background:#f6f6f6;border-radius:12px;padding:12px;margin:12px 0}
+label{display:block;margin:8px 0 4px}
+input,textarea,button{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:16px;box-sizing:border-box}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+table{width:100%;border-collapse:collapse;margin-top:10px;background:white}
+th,td{border-bottom:1px solid #eee;padding:8px;text-align:left}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#eee;font-size:12px;margin-left:6px}
+</style>
+
+<h1>工程逆算くん <span class="badge">PWA</span></h1>
+
+<section>
+  <label>出荷日（締切）</label>
+  <input type="date" id="due">
+  <div class="controls">
+    <div>
+      <label>工程数</label>
+      <input type="number" id="count" min="1" value="5">
+    </div>
+    <div>
+      <label><input type="checkbox" id="skipWeekend" checked> 土日を除外</label>
+      <label><input type="checkbox" id="includeDue" checked> 出荷日を含める</label>
+    </div>
+  </div>
+  <label>工程名（出荷に近い順、カンマ区切り）</label>
+  <textarea id="steps" rows="3" placeholder="空欄なら工程1,工程2…を自動作成"></textarea>
+  <button id="gen">スケジュール生成</button>
+  <button id="copy">CSVコピー</button>
+  <small id="hint"></small>
+</section>
+
+<section id="out"></section>
+
+<script>
+// 画面ロジック（前回のやつを最小移植）
+const fmt = d => d.toLocaleDateString('ja-JP',{year:'numeric',month:'2-digit',day:'2-digit',weekday:'short'});
+function prevWorkday(d, skipWeekend){ const nd=new Date(d); nd.setDate(nd.getDate()-1);
+  if(!skipWeekend) return nd; while([0,6].includes(nd.getDay())) nd.setDate(nd.getDate()-1); return nd;}
+function plan(dueDate, names, skipWeekend, includeDue){
+  const rows=[]; let d=new Date(dueDate); if(isNaN(d)) throw new Error('出荷日が未入力です');
+  if(skipWeekend && [0,6].includes(d.getDay())){ while([0,6].includes(d.getDay())) d=prevWorkday(d,true); }
+  if(!includeDue) d=prevWorkday(d,skipWeekend);
+  for(let i=0;i<names.length;i++){ rows.push({idx:i+1,name:names[i],date:new Date(d)}); d=prevWorkday(d,skipWeekend); }
+  return rows;
+}
+function parseNames(text,count){ const arr=text.split(',').map(s=>s.trim()).filter(Boolean); return arr.length?arr:Array.from({length:count},(_,i)=>`工程${i+1}`); }
+function toCSV(rows){
+  const header=['日付','曜','工程名'];
+  const data=rows.map(r=>{ const d=r.date,w=['日','月','火','水','木','金','土'][d.getDay()];
+    const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');
+    return [`${y}-${m}-${day}`,w,r.name]; });
+  return [header,...data].map(row=>row.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(',')).join('\n');
+}
+document.getElementById('gen').onclick=()=>{
+  const due=document.getElementById('due').value;
+  const names=parseNames(document.getElementById('steps').value, Number(document.getElementById('count').value||1));
+  const skipWeekend=document.getElementById('skipWeekend').checked;
+  const includeDue=document.getElementById('includeDue').checked;
+  try{
+    const rows=plan(due,names,skipWeekend,includeDue); window._rows=rows;
+    let html='<table><thead><tr><th>#</th><th>日付</th><th>工程</th></tr></thead><tbody>';
+    rows.forEach(r=>{ html+=`<tr><td>${r.idx}</td><td>${fmt(r.date)}</td><td>${r.name}</td></tr>`; });
+    html+='</tbody></table>'; document.getElementById('out').innerHTML=html;
+    const first=rows[rows.length-1]?.date,last=rows[0]?.date;
+    document.getElementById('hint').textContent= first&&last ? `範囲：${fmt(first)} 〜 ${fmt(last)}` : '';
+  }catch(e){ alert(e.message); }
+};
+document.getElementById('copy').onclick=()=>{
+  if(!window._rows){ alert('先に生成してください'); return; }
+  navigator.clipboard.writeText(toCSV(window._rows)).then(()=>alert('CSVをコピーしました'));
+};
+// サービスワーカー登録
+if('serviceWorker' in navigator){ window.addEventListener('load', () => {
+  navigator.serviceWorker.register('./service-worker.js'); }); }
+</script>
