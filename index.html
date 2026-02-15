@@ -41,6 +41,7 @@
     .color-cell { display: flex; align-items: center; gap: 6px; }
     .color-preview { width: 18px; height: 18px; border-radius: 999px; border: 1px solid #94a3b8; flex: 0 0 18px; }
     .step-color { min-width: 52px; padding: 2px; height: 34px; }
+    .matrix-stack { display: flex; flex-direction: column; gap: 10px; }
 
     @page { size: A4 landscape; margin: 10mm; }
     @media print {
@@ -162,6 +163,13 @@
         <select id="printColorMode">
           <option value="color" selected>カラー</option>
           <option value="mono">白黒</option>
+        </select>
+      </div>
+      <div>
+        <label for="printWrapDays">出力折返し</label>
+        <select id="printWrapDays">
+          <option value="none" selected>折返しなし</option>
+          <option value="15">15日で2段</option>
         </select>
       </div>
       <button id="printPdf" class="secondary">印刷 / PDF出力</button>
@@ -423,7 +431,8 @@
       holidayList: document.getElementById('holidayList').value,
       printCellWidth: document.getElementById('printCellWidth').value,
       printCellHeight: document.getElementById('printCellHeight').value,
-      printColorMode: document.getElementById('printColorMode').value
+      printColorMode: document.getElementById('printColorMode').value,
+      printWrapDays: document.getElementById('printWrapDays').value
     };
   }
 
@@ -455,6 +464,7 @@
       if (state.settings.printCellHeight) document.getElementById('printCellHeight').value = state.settings.printCellHeight;
       else if (state.settings.printRowLines) document.getElementById('printCellHeight').value = String(14 + Number(state.settings.printRowLines) * 7);
       if (state.settings.printColorMode) document.getElementById('printColorMode').value = state.settings.printColorMode;
+      if (state.settings.printWrapDays) document.getElementById('printWrapDays').value = state.settings.printWrapDays;
     }
     if (Array.isArray(state.orders) && state.orders.length) {
       ordersTbody.innerHTML = '';
@@ -579,6 +589,71 @@
     return null;
   }
 
+  function chunkTimelineDays(days, wrapDays) {
+    if (!wrapDays || wrapDays <= 0) return [days];
+    const chunks = [];
+    for (let i = 0; i < days.length; i += wrapDays) chunks.push(days.slice(i, i + wrapDays));
+    return chunks;
+  }
+
+  function buildMatrixTable(daySlice, orders, map, activePatternName, activeDraftSteps, skipWeekend, holidaySet) {
+    const table = document.createElement('table');
+    table.className = 'matrix';
+
+    const thead = document.createElement('thead');
+    const rDate = document.createElement('tr');
+    rDate.innerHTML = '<th class="left-col">日付</th><th class="due-col">出荷日</th>';
+    daySlice.forEach(d => {
+      const th = document.createElement('th');
+      th.textContent = dateLabel(d);
+      rDate.appendChild(th);
+    });
+    const rWeek = document.createElement('tr');
+    rWeek.innerHTML = '<th class="left-col">曜日</th><th class="due-col"></th>';
+    daySlice.forEach(d => {
+      const th = document.createElement('th');
+      th.textContent = weekdayLabel(d);
+      rWeek.appendChild(th);
+    });
+    thead.appendChild(rDate);
+    thead.appendChild(rWeek);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    orders.forEach(order => {
+      const steps = order.patternName === activePatternName && activeDraftSteps.length
+        ? activeDraftSteps
+        : map[order.patternName];
+      if (!steps) throw new Error('未登録パターンです: ' + order.patternName);
+      const tasks = calcOrderTasks(order, steps, skipWeekend, holidaySet);
+
+      const tr = document.createElement('tr');
+      const tName = document.createElement('td');
+      tName.className = 'left-col';
+      tName.textContent = order.product;
+      tr.appendChild(tName);
+      const tDue = document.createElement('td');
+      tDue.className = 'due-col';
+      tDue.textContent = order.dueDate;
+      tr.appendChild(tDue);
+
+      daySlice.forEach(day => {
+        const td = document.createElement('td');
+        const task = findTaskForDate(tasks, day);
+        if (task) {
+          td.style.background = task.color;
+          td.title = task.name + ' (' + task.days + '日)';
+          td.textContent = task.name;
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+
+    table.appendChild(tbody);
+    return table;
+  }
+
   function generate() {
     const map = loadPatterns();
     const orders = collectOrders();
@@ -593,63 +668,18 @@
     if (!Number.isFinite(horizon) || horizon < 5) throw new Error('営業日数は5以上を入力してください。');
 
     const timelineDays = buildTimelineDays(new Date(startText), horizon, skipWeekend, holidaySet);
-    const table = document.createElement('table');
-    table.className = 'matrix';
+    const wrapMode = document.getElementById('printWrapDays').value;
+    const wrapDays = wrapMode === '15' ? 15 : 0;
+    const dayChunks = chunkTimelineDays(timelineDays, wrapDays);
 
-    const thead = document.createElement('thead');
-    const rDate = document.createElement('tr');
-    rDate.innerHTML = '<th class="left-col">日付</th><th class="due-col">出荷日</th>';
-    timelineDays.forEach(d => {
-      const th = document.createElement('th');
-      th.textContent = dateLabel(d);
-      rDate.appendChild(th);
-    });
-    const rWeek = document.createElement('tr');
-    rWeek.innerHTML = '<th class="left-col">曜日</th><th class="due-col"></th>';
-    timelineDays.forEach(d => {
-      const th = document.createElement('th');
-      th.textContent = weekdayLabel(d);
-      rWeek.appendChild(th);
-    });
-    thead.appendChild(rDate);
-    thead.appendChild(rWeek);
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
-
-    orders.forEach(order => {
-      const steps = order.patternName === activePatternName && activeDraftSteps.length
-        ? activeDraftSteps
-        : map[order.patternName];
-      if (!steps) throw new Error('未登録パターンです: ' + order.patternName);
-      const tasks = calcOrderTasks(order, steps, skipWeekend, holidaySet);
-      const tr = document.createElement('tr');
-      const tName = document.createElement('td');
-      tName.className = 'left-col';
-      tName.textContent = order.product;
-      tr.appendChild(tName);
-      const tDue = document.createElement('td');
-      tDue.className = 'due-col';
-      tDue.textContent = order.dueDate;
-      tr.appendChild(tDue);
-
-      timelineDays.forEach(day => {
-        const td = document.createElement('td');
-        const task = findTaskForDate(tasks, day);
-        if (task) {
-          td.style.background = task.color;
-          td.title = task.name + ' (' + task.days + '日)';
-          td.textContent = task.name;
-        } else {
-        }
-        tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
+    const stack = document.createElement('div');
+    stack.className = 'matrix-stack';
+    dayChunks.forEach(slice => {
+      stack.appendChild(buildMatrixTable(slice, orders, map, activePatternName, activeDraftSteps, skipWeekend, holidaySet));
     });
 
-    table.appendChild(tbody);
     resultEl.innerHTML = '';
-    resultEl.appendChild(table);
+    resultEl.appendChild(stack);
     showStatus('生成完了: ' + orders.length + '件 / ' + horizon + '営業日を表示');
   }
 
@@ -725,6 +755,7 @@
   document.getElementById('printCellWidth').addEventListener('input', () => { applyPrintSettings(); saveAppState(); });
   document.getElementById('printCellHeight').addEventListener('input', () => { applyPrintSettings(); saveAppState(); });
   document.getElementById('printColorMode').addEventListener('change', () => { applyPrintSettings(); saveAppState(); });
+  document.getElementById('printWrapDays').addEventListener('change', saveAppState);
   document.getElementById('printPdf').addEventListener('click', () => {
     applyPrintSettings();
     window.print();
