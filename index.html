@@ -103,7 +103,13 @@
   <section class="card">
     <div class="row">
       <button id="generate" class="primary">一覧を生成</button>
-      <button id="copyCsv" class="secondary">CSVコピー</button>
+      <button id="saveLocal" class="secondary">ローカルに保存</button>
+      <button id="loadLocal" class="secondary">呼び出す</button>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <input id="localSaveName" placeholder="保存名（例: 2026-02-15時点）">
+      <select id="localDataSelect"></select>
+      <button id="deleteLocal" class="danger">保存データ削除</button>
     </div>
     <div class="status" id="status"></div>
   </section>
@@ -118,11 +124,11 @@
 (() => {
   const KEY = 'scheduler-patterns-v2';
   const STATE_KEY = 'scheduler-state-v1';
+  const BACKUP_KEY = 'scheduler-backups-v1';
   const stepsTbody = document.querySelector('#stepsTable tbody');
   const ordersTbody = document.querySelector('#ordersTable tbody');
   const resultEl = document.getElementById('result');
   const statusEl = document.getElementById('status');
-  let latestMatrix = null;
 
   const SAMPLE_STEPS = [
     { name: '出荷', days: 1, color: '#f59e0b' },
@@ -386,6 +392,86 @@
     }
   }
 
+  function loadBackups() {
+    try {
+      return JSON.parse(localStorage.getItem(BACKUP_KEY) || '{}');
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function saveBackups(backups) {
+    localStorage.setItem(BACKUP_KEY, JSON.stringify(backups));
+  }
+
+  function refreshBackupSelect(selected) {
+    const sel = document.getElementById('localDataSelect');
+    const backups = loadBackups();
+    sel.innerHTML = '<option value="">保存データを選択</option>';
+    Object.keys(backups).sort().forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      if (selected && selected === name) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+
+  function saveLocalSnapshot() {
+    const name = document.getElementById('localSaveName').value.trim() || ('保存_' + new Date().toISOString().slice(0,16).replace('T','_'));
+    const backups = loadBackups();
+    backups[name] = {
+      savedAt: new Date().toISOString(),
+      state: {
+        settings: getSettingsState(),
+        orders: collectOrdersForState()
+      },
+      patterns: loadPatterns()
+    };
+    saveBackups(backups);
+    refreshBackupSelect(name);
+    showStatus('ローカル保存しました: ' + name);
+  }
+
+  function loadLocalSnapshot() {
+    const name = document.getElementById('localDataSelect').value;
+    if (!name) throw new Error('呼び出す保存データを選択してください。');
+    const backups = loadBackups();
+    const data = backups[name];
+    if (!data) throw new Error('保存データが見つかりません。');
+
+    if (data.patterns && typeof data.patterns === 'object') {
+      savePatterns(data.patterns);
+      refreshPatternSelect('標準');
+    }
+
+    if (data.state && data.state.settings) {
+      const st = data.state.settings;
+      if (st.startDate) document.getElementById('startDate').value = st.startDate;
+      if (st.horizonDays) document.getElementById('horizonDays').value = st.horizonDays;
+      document.getElementById('skipWeekend').checked = st.skipWeekend !== false;
+      document.getElementById('holidayList').value = st.holidayList || '';
+    }
+
+    if (data.state && Array.isArray(data.state.orders)) {
+      ordersTbody.innerHTML = '';
+      data.state.orders.forEach(order => addOrderRow(order));
+    }
+
+    saveAppState();
+    showStatus('呼び出しました: ' + name);
+  }
+
+  function deleteLocalSnapshot() {
+    const name = document.getElementById('localDataSelect').value;
+    if (!name) throw new Error('削除する保存データを選択してください。');
+    const backups = loadBackups();
+    delete backups[name];
+    saveBackups(backups);
+    refreshBackupSelect();
+    showStatus('削除しました: ' + name);
+  }
+
   function buildTimelineDays(startDate, count, skipWeekend, holidaySet) {
     const days = [];
     let cur = new Date(startDate);
@@ -460,7 +546,6 @@
     table.appendChild(thead);
 
     const tbody = document.createElement('tbody');
-    const csvRows = [['品名', '出荷日'].concat(timelineDays.map(d => toISO(d)))];
 
     orders.forEach(order => {
       const steps = order.patternName === activePatternName && activeDraftSteps.length
@@ -478,7 +563,6 @@
       tDue.textContent = order.dueDate;
       tr.appendChild(tDue);
 
-      const csvLine = [order.product, order.dueDate];
       timelineDays.forEach(day => {
         const td = document.createElement('td');
         const task = findTaskForDate(tasks, day);
@@ -486,31 +570,17 @@
           td.style.background = task.color;
           td.title = task.name + ' (' + task.days + '日)';
           td.textContent = task.name;
-          csvLine.push(task.name);
         } else {
-          csvLine.push('');
         }
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
-      csvRows.push(csvLine);
     });
 
     table.appendChild(tbody);
     resultEl.innerHTML = '';
     resultEl.appendChild(table);
-    latestMatrix = csvRows;
     showStatus('生成完了: ' + orders.length + '件 / ' + horizon + '営業日を表示');
-  }
-
-  function copyCsv() {
-    if (!latestMatrix) return showStatus('先に一覧を生成してください。', true);
-    const csv = latestMatrix
-      .map(row => row.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(','))
-      .join('\n');
-    navigator.clipboard.writeText(csv)
-      .then(() => showStatus('CSVをコピーしました。'))
-      .catch(() => showStatus('コピーに失敗しました。', true));
   }
 
   document.getElementById('addStep').addEventListener('click', () => addStepRow());
@@ -567,7 +637,15 @@
   document.getElementById('generate').addEventListener('click', () => {
     try { generate(); } catch (e) { showStatus(e.message, true); }
   });
-  document.getElementById('copyCsv').addEventListener('click', copyCsv);
+  document.getElementById('saveLocal').addEventListener('click', () => {
+    try { saveLocalSnapshot(); } catch (e) { showStatus(e.message, true); }
+  });
+  document.getElementById('loadLocal').addEventListener('click', () => {
+    try { loadLocalSnapshot(); } catch (e) { showStatus(e.message, true); }
+  });
+  document.getElementById('deleteLocal').addEventListener('click', () => {
+    try { deleteLocalSnapshot(); } catch (e) { showStatus(e.message, true); }
+  });
   ['startDate', 'horizonDays', 'holidayList'].forEach(id => {
     document.getElementById(id).addEventListener('input', saveAppState);
   });
@@ -587,6 +665,7 @@
   renderLegend();
   restoreAppState();
   if (!ordersTbody.querySelector('tr')) addOrderRow({ product: '', dueDate: '', patternName: '標準' });
+  refreshBackupSelect();
   saveAppState();
 
   if ('serviceWorker' in navigator) {
