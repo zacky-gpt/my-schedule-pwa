@@ -7,6 +7,7 @@
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#2563eb">
   <style>
+    :root { --print-cell-size: 36px; }
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #f3f6fc; color: #0f172a; }
     .container { max-width: 1280px; margin: 0 auto; padding: 16px; }
     .card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
@@ -39,6 +40,18 @@
     .color-cell { display: flex; align-items: center; gap: 6px; }
     .color-preview { width: 18px; height: 18px; border-radius: 999px; border: 1px solid #94a3b8; flex: 0 0 18px; }
     .step-color { min-width: 52px; padding: 2px; height: 34px; }
+
+    @page { size: A4 landscape; margin: 10mm; }
+    @media print {
+      body { background: #fff; }
+      h1, .lead, .card:not(.print-target) { display: none !important; }
+      .container { max-width: none; padding: 0; }
+      .print-target { display: block !important; margin: 0; padding: 0; box-shadow: none; border-radius: 0; }
+      #result { overflow: visible; }
+      .matrix th, .matrix td { min-width: var(--print-cell-size); padding: 2px; font-size: 10px; }
+      .left-col { min-width: 34mm; }
+      .due-col { min-width: 24mm; }
+    }
 
     @media (max-width: 768px) {
       .container { padding: 10px; }
@@ -130,10 +143,17 @@
       <select id="localDataSelect"></select>
       <button id="deleteLocal" class="danger">保存データ削除</button>
     </div>
+    <div class="row" style="margin-top:8px;">
+      <div>
+        <label for="printCellSize">印刷セル幅（24〜56px）</label>
+        <input type="range" id="printCellSize" min="24" max="56" value="36">
+      </div>
+      <button id="printPdf" class="secondary">印刷 / PDF出力</button>
+    </div>
     <div class="status" id="status"></div>
   </section>
 
-  <section class="card">
+  <section class="card print-target">
     <h2>4) 出力（Excel風一覧）</h2>
     <div id="result" class="scroll">まだ生成していません。</div>
   </section>
@@ -165,6 +185,12 @@
   function showStatus(text, isErr) {
     statusEl.style.color = isErr ? '#b91c1c' : '#0f766e';
     statusEl.textContent = text;
+  }
+
+  function applyPrintCellSize() {
+    const value = Number(document.getElementById('printCellSize').value) || 36;
+    const clamped = Math.max(24, Math.min(56, value));
+    document.documentElement.style.setProperty('--print-cell-size', clamped + 'px');
   }
 
   function toISO(date) {
@@ -377,7 +403,8 @@
       startDate: document.getElementById('startDate').value,
       horizonDays: document.getElementById('horizonDays').value,
       skipWeekend: document.getElementById('skipWeekend').checked,
-      holidayList: document.getElementById('holidayList').value
+      holidayList: document.getElementById('holidayList').value,
+      printCellSize: document.getElementById('printCellSize').value
     };
   }
 
@@ -404,6 +431,7 @@
       if (state.settings.horizonDays) document.getElementById('horizonDays').value = state.settings.horizonDays;
       document.getElementById('skipWeekend').checked = state.settings.skipWeekend !== false;
       document.getElementById('holidayList').value = state.settings.holidayList || '';
+      if (state.settings.printCellSize) document.getElementById('printCellSize').value = state.settings.printCellSize;
     }
     if (Array.isArray(state.orders) && state.orders.length) {
       ordersTbody.innerHTML = '';
@@ -669,6 +697,11 @@
     document.getElementById(id).addEventListener('input', saveAppState);
   });
   document.getElementById('skipWeekend').addEventListener('change', saveAppState);
+  document.getElementById('printCellSize').addEventListener('input', () => { applyPrintCellSize(); saveAppState(); });
+  document.getElementById('printPdf').addEventListener('click', () => {
+    applyPrintCellSize();
+    window.print();
+  });
 
   const today = new Date();
   document.getElementById('startDate').value = toISO(today);
@@ -683,6 +716,7 @@
   loadPatterns()['標準'].forEach(addStepRow);
   renderLegend();
   restoreAppState();
+  applyPrintCellSize();
   if (!ordersTbody.querySelector('tr')) addOrderRow({ product: '', dueDate: '', patternName: '標準' });
   refreshBackupSelect();
   saveAppState();
