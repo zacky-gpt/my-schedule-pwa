@@ -7,7 +7,7 @@
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#2563eb">
   <style>
-    :root { --print-cell-size: 36px; --print-row-lines: 2; }
+    :root { --print-cell-width: 36px; --print-cell-height: 28px; }
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #f3f6fc; color: #0f172a; }
     .container { max-width: 1280px; margin: 0 auto; padding: 16px; }
     .card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
@@ -23,6 +23,7 @@
     table { width: 100%; border-collapse: collapse; }
     th, td { border: 1px solid #dbe2ef; padding: 6px; font-size: .88rem; }
     th { background: #eff6ff; }
+    .matrix { table-layout: fixed; width: max-content; }
     .matrix th, .matrix td { min-width: 40px; text-align: center; padding: 4px; }
     .left-col { min-width: 160px; text-align: left !important; }
     .due-col { min-width: 110px; background: #fef9c3; }
@@ -48,8 +49,9 @@
       .container { max-width: none; padding: 0; }
       .print-target { display: block !important; margin: 0; padding: 0; box-shadow: none; border-radius: 0; }
       #result { overflow: visible; }
-      .matrix th, .matrix td { min-width: var(--print-cell-size); padding: 2px; font-size: 10px; }
-      .matrix td { min-height: calc(var(--print-row-lines) * 1.2em + 6px); line-height: 1.2; vertical-align: middle; }
+      .matrix { width: auto; }
+      .matrix th, .matrix td { width: var(--print-cell-width); min-width: var(--print-cell-width); height: var(--print-cell-height); padding: 2px; font-size: 10px; }
+      .matrix td { line-height: 1.2; vertical-align: middle; overflow: hidden; }
       .matrix td, .matrix th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       html[data-print-color='mono'] .matrix td { background: #fff !important; color: #111 !important; }
       .left-col { min-width: 34mm; }
@@ -148,16 +150,12 @@
     </div>
     <div class="row" style="margin-top:8px;">
       <div>
-        <label for="printCellSize">印刷セル幅（24〜56px）</label>
-        <input type="range" id="printCellSize" min="24" max="56" value="36">
+        <label for="printCellWidth">印刷セル横幅（24〜72px）</label>
+        <input type="range" id="printCellWidth" min="24" max="72" value="36">
       </div>
       <div>
-        <label for="printRowLines">印刷セルの縦行数</label>
-        <select id="printRowLines">
-          <option value="1">1行</option>
-          <option value="2" selected>2行</option>
-          <option value="3">3行</option>
-        </select>
+        <label for="printCellHeight">印刷セル縦幅（20〜64px）</label>
+        <input type="range" id="printCellHeight" min="20" max="64" value="28">
       </div>
       <div>
         <label for="printColorMode">印刷カラー</label>
@@ -200,13 +198,13 @@
   }
 
   function applyPrintSettings() {
-    const cellValue = Number(document.getElementById('printCellSize').value) || 36;
-    const cellClamped = Math.max(24, Math.min(56, cellValue));
-    document.documentElement.style.setProperty('--print-cell-size', cellClamped + 'px');
+    const cellWidthValue = Number(document.getElementById('printCellWidth').value) || 36;
+    const cellWidth = Math.max(24, Math.min(72, cellWidthValue));
+    document.documentElement.style.setProperty('--print-cell-width', cellWidth + 'px');
 
-    const rowLines = Number(document.getElementById('printRowLines').value) || 2;
-    const rowClamped = Math.max(1, Math.min(3, rowLines));
-    document.documentElement.style.setProperty('--print-row-lines', String(rowClamped));
+    const cellHeightValue = Number(document.getElementById('printCellHeight').value) || 28;
+    const cellHeight = Math.max(20, Math.min(64, cellHeightValue));
+    document.documentElement.style.setProperty('--print-cell-height', cellHeight + 'px');
 
     const colorMode = document.getElementById('printColorMode').value === 'mono' ? 'mono' : 'color';
     document.documentElement.setAttribute('data-print-color', colorMode);
@@ -423,8 +421,8 @@
       horizonDays: document.getElementById('horizonDays').value,
       skipWeekend: document.getElementById('skipWeekend').checked,
       holidayList: document.getElementById('holidayList').value,
-      printCellSize: document.getElementById('printCellSize').value,
-      printRowLines: document.getElementById('printRowLines').value,
+      printCellWidth: document.getElementById('printCellWidth').value,
+      printCellHeight: document.getElementById('printCellHeight').value,
       printColorMode: document.getElementById('printColorMode').value
     };
   }
@@ -452,8 +450,10 @@
       if (state.settings.horizonDays) document.getElementById('horizonDays').value = state.settings.horizonDays;
       document.getElementById('skipWeekend').checked = state.settings.skipWeekend !== false;
       document.getElementById('holidayList').value = state.settings.holidayList || '';
-      if (state.settings.printCellSize) document.getElementById('printCellSize').value = state.settings.printCellSize;
-      if (state.settings.printRowLines) document.getElementById('printRowLines').value = state.settings.printRowLines;
+      if (state.settings.printCellWidth) document.getElementById('printCellWidth').value = state.settings.printCellWidth;
+      else if (state.settings.printCellSize) document.getElementById('printCellWidth').value = state.settings.printCellSize;
+      if (state.settings.printCellHeight) document.getElementById('printCellHeight').value = state.settings.printCellHeight;
+      else if (state.settings.printRowLines) document.getElementById('printCellHeight').value = String(14 + Number(state.settings.printRowLines) * 7);
       if (state.settings.printColorMode) document.getElementById('printColorMode').value = state.settings.printColorMode;
     }
     if (Array.isArray(state.orders) && state.orders.length) {
@@ -722,8 +722,8 @@
     document.getElementById(id).addEventListener('input', saveAppState);
   });
   document.getElementById('skipWeekend').addEventListener('change', saveAppState);
-  document.getElementById('printCellSize').addEventListener('input', () => { applyPrintSettings(); saveAppState(); });
-  document.getElementById('printRowLines').addEventListener('change', () => { applyPrintSettings(); saveAppState(); });
+  document.getElementById('printCellWidth').addEventListener('input', () => { applyPrintSettings(); saveAppState(); });
+  document.getElementById('printCellHeight').addEventListener('input', () => { applyPrintSettings(); saveAppState(); });
   document.getElementById('printColorMode').addEventListener('change', () => { applyPrintSettings(); saveAppState(); });
   document.getElementById('printPdf').addEventListener('click', () => {
     applyPrintSettings();
