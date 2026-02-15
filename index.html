@@ -1,629 +1,508 @@
- -<!doctype html>
--<meta charset="utf-8">
--<meta name="viewport" content="width=device-width,initial-scale=1">
--<title>工程逆算くん</title>
--
--<link rel="manifest" href="manifest.json">
--<link rel="apple-touch-icon" href="icons/icon-192.png">
--<meta name="theme-color" content="#ffffff">
--
--<style>
--body{font-family:system-ui,-apple-system,Segoe UI,Roboto;max-width:720px;margin:16px auto;padding:0 12px;line-height:1.6}
--h1{font-size:1.2rem;margin:0 0 8px}
--section{background:#f6f6f6;border-radius:12px;padding:12px;margin:12px 0}
--label{display:block;margin:8px 0 4px}
--input,textarea,button{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:16px;box-sizing:border-box}
--.controls{display:grid;grid-template-columns:1fr 1fr;gap:8px}
--table{width:100%;border-collapse:collapse;margin-top:10px;background:white}
--th,td{border-bottom:1px solid #eee;padding:8px;text-align:left}
--.badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#eee;font-size:12px;margin-left:6px}
--</style>
--
--<h1>工程逆算くん <span class="badge">PWA</span></h1>
--
--<section>
--  <label>出荷日（締切）</label>
--  <input type="date" id="due">
--  <div class="controls">
--    <div>
--      <label>工程数</label>
--      <input type="number" id="count" min="1" value="5">
--    </div>
--    <div>
--      <label><input type="checkbox" id="skipWeekend" checked> 土日を除外</label>
--      <label><input type="checkbox" id="includeDue" checked> 出荷日を含める</label>
--    </div>
--  </div>
--  <label>工程名（出荷に近い順、カンマ区切り）</label>
--  <textarea id="steps" rows="3" placeholder="空欄なら工程1,工程2…を自動作成"></textarea>
--  <button id="gen">スケジュール生成</button>
--  <button id="copy">CSVコピー</button>
--  <small id="hint"></small>
--</section>
--
--<section id="out"></section>
--
--<script>
--// 画面ロジック（前回のやつを最小移植）
--const fmt = d => d.toLocaleDateString('ja-JP',{year:'numeric',month:'2-digit',day:'2-digit',weekday:'short'});
--function prevWorkday(d, skipWeekend){ const nd=new Date(d); nd.setDate(nd.getDate()-1);
--  if(!skipWeekend) return nd; while([0,6].includes(nd.getDay())) nd.setDate(nd.getDate()-1); return nd;}
--function plan(dueDate, names, skipWeekend, includeDue){
--  const rows=[]; let d=new Date(dueDate); if(isNaN(d)) throw new Error('出荷日が未入力です');
--  if(skipWeekend && [0,6].includes(d.getDay())){ while([0,6].includes(d.getDay())) d=prevWorkday(d,true); }
--  if(!includeDue) d=prevWorkday(d,skipWeekend);
--  for(let i=0;i<names.length;i++){ rows.push({idx:i+1,name:names[i],date:new Date(d)}); d=prevWorkday(d,skipWeekend); }
--  return rows;
--}
--function parseNames(text,count){ const arr=text.split(',').map(s=>s.trim()).filter(Boolean); return arr.length?arr:Array.from({length:count},(_,i)=>`工程${i+1}`); }
--function toCSV(rows){
--  const header=['日付','曜','工程名'];
--  const data=rows.map(r=>{ const d=r.date,w=['日','月','火','水','木','金','土'][d.getDay()];
--    const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');
--    return [`${y}-${m}-${day}`,w,r.name]; });
--  return [header,...data].map(row=>row.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(',')).join('\n');
--}
--document.getElementById('gen').onclick=()=>{
--  const due=document.getElementById('due').value;
--  const names=parseNames(document.getElementById('steps').value, Number(document.getElementById('count').value||1));
--  const skipWeekend=document.getElementById('skipWeekend').checked;
--  const includeDue=document.getElementById('includeDue').checked;
--  try{
--    const rows=plan(due,names,skipWeekend,includeDue); window._rows=rows;
--    let html='<table><thead><tr><th>#</th><th>日付</th><th>工程</th></tr></thead><tbody>';
--    rows.forEach(r=>{ html+=`<tr><td>${r.idx}</td><td>${fmt(r.date)}</td><td>${r.name}</td></tr>`; });
--    html+='</tbody></table>'; document.getElementById('out').innerHTML=html;
--    const first=rows[rows.length-1]?.date,last=rows[0]?.date;
--    document.getElementById('hint').textContent= first&&last ? `範囲：${fmt(first)} 〜 ${fmt(last)}` : '';
--  }catch(e){ alert(e.message); }
--};
--document.getElementById('copy').onclick=()=>{
--  if(!window._rows){ alert('先に生成してください'); return; }
--  navigator.clipboard.writeText(toCSV(window._rows)).then(()=>alert('CSVをコピーしました'));
--};
--// サービスワーカー登録
--if('serviceWorker' in navigator){ window.addEventListener('load', () => {
--  navigator.serviceWorker.register('./service-worker.js'); }); }
--</script>
-+<!doctype html>
-+<html lang="ja">
-+<head>
-+  <meta charset="utf-8">
-+  <meta name="viewport" content="width=device-width,initial-scale=1">
-+  <title>工程逆算スケジューラ</title>
-+  <link rel="manifest" href="manifest.json">
-+  <meta name="theme-color" content="#2563eb">
-+  <style>
-+    :root { color-scheme: light; }
-+    body {
-+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-+      margin: 0;
-+      background: #f3f6fc;
-+      color: #0f172a;
-+    }
-+    .container {
-+      max-width: 980px;
-+      margin: 0 auto;
-+      padding: 16px;
-+    }
-+    h1 { margin: 4px 0 2px; font-size: 1.35rem; }
-+    .lead { margin: 0 0 16px; color: #334155; }
-+    .card {
-+      background: #fff;
-+      border-radius: 14px;
-+      padding: 14px;
-+      box-shadow: 0 1px 0 rgba(15, 23, 42, 0.06), 0 1px 4px rgba(15, 23, 42, 0.08);
-+      margin-bottom: 14px;
-+    }
-+    .grid {
-+      display: grid;
-+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-+      gap: 12px;
-+    }
-+    label { display: block; font-weight: 600; font-size: .9rem; margin-bottom: 6px; }
-+    input, textarea, select, button {
-+      width: 100%;
-+      box-sizing: border-box;
-+      border: 1px solid #cbd5e1;
-+      border-radius: 10px;
-+      font-size: 15px;
-+      padding: 9px 11px;
-+      background: #fff;
-+    }
-+    textarea { min-height: 90px; resize: vertical; }
-+    .row { display: flex; gap: 8px; align-items: end; }
-+    .row > * { flex: 1; }
-+    .inline {
-+      display: flex;
-+      align-items: center;
-+      gap: 8px;
-+      margin: 4px 0;
-+      font-weight: 500;
-+    }
-+    .inline input { width: auto; }
-+    button { cursor: pointer; }
-+    .primary { background: #2563eb; color: #fff; border-color: #1d4ed8; }
-+    .secondary { background: #e2e8f0; border-color: #cbd5e1; }
-+    .danger { background: #fee2e2; border-color: #fecaca; }
-+    table {
-+      width: 100%;
-+      border-collapse: collapse;
-+      overflow: hidden;
-+      border-radius: 10px;
-+      background: #fff;
-+    }
-+    th, td {
-+      border-bottom: 1px solid #e2e8f0;
-+      text-align: left;
-+      padding: 9px;
-+      font-size: .92rem;
-+    }
-+    th { background: #f8fafc; }
-+    tr:last-child td { border-bottom: none; }
-+    .badge {
-+      display: inline-block;
-+      font-size: .75rem;
-+      padding: 2px 9px;
-+      border-radius: 999px;
-+      background: #dbeafe;
-+      color: #1d4ed8;
-+      font-weight: 700;
-+    }
-+    .muted { color: #475569; font-size: .88rem; }
-+    .status { margin-top: 8px; min-height: 1.3em; color: #0f766e; font-weight: 600; }
-+  </style>
-+</head>
-+<body>
-+<div class="container">
-+  <h1>工程逆算スケジューラ <span class="badge">PWA</span></h1>
-+  <p class="lead">納期から逆算して各工程の締切を算出。休日除外・作業パターン編集・日単位/時間単位に対応。</p>
-+
-+  <section class="card">
-+    <h2>1) 基本設定</h2>
-+    <div class="grid">
-+      <div>
-+        <label for="mode">時間スケール</label>
-+        <select id="mode">
-+          <option value="day">日単位（1工程 = N営業日）</option>
-+          <option value="hour">時間単位（1工程 = N時間）</option>
-+        </select>
-+      </div>
-+      <div id="dueDateWrap">
-+        <label for="dueDate">納期日</label>
-+        <input type="date" id="dueDate">
-+      </div>
-+      <div id="dueDateTimeWrap" hidden>
-+        <label for="dueDateTime">納期日時</label>
-+        <input type="datetime-local" id="dueDateTime">
-+      </div>
-+      <div>
-+        <label for="workStart">勤務開始時刻（時間単位）</label>
-+        <input type="time" id="workStart" value="09:00">
-+      </div>
-+      <div>
-+        <label for="workEnd">勤務終了時刻（時間単位）</label>
-+        <input type="time" id="workEnd" value="18:00">
-+      </div>
-+    </div>
-+    <div class="grid" style="margin-top:8px;">
-+      <label class="inline"><input type="checkbox" id="skipWeekend" checked> 土日を休日扱いにする</label>
-+      <label class="inline"><input type="checkbox" id="includeDue" checked> 納期日/納期時刻を最終工程に含める</label>
-+    </div>
-+    <label for="holidayList">追加の休日（改行区切り: 例 2026-01-01）</label>
-+    <textarea id="holidayList" placeholder="2026-01-01
-+2026-01-02"></textarea>
-+    <p class="muted">※ 日単位では工程の「期限日」、時間単位では工程の「終了時刻」を逆算します。</p>
-+  </section>
-+
-+  <section class="card">
-+    <h2>2) 作業パターン</h2>
-+    <div class="row">
-+      <div>
-+        <label for="patternName">パターン名</label>
-+        <input id="patternName" placeholder="標準パターン">
-+      </div>
-+      <div>
-+        <button id="savePattern" class="secondary">この内容を保存</button>
-+      </div>
-+      <div>
-+        <label for="loadPattern">保存済みパターン</label>
-+        <select id="loadPattern"></select>
-+      </div>
-+      <div>
-+        <button id="deletePattern" class="danger">選択パターン削除</button>
-+      </div>
-+    </div>
-+
-+    <table id="stepsTable" style="margin-top:10px;">
-+      <thead>
-+      <tr>
-+        <th style="width:56px;">順</th>
-+        <th>工程名（納期側→前工程へ）</th>
-+        <th style="width:180px;">所要量</th>
-+        <th style="width:80px;">削除</th>
-+      </tr>
-+      </thead>
-+      <tbody></tbody>
-+    </table>
-+    <div class="row" style="margin-top:8px;">
-+      <button id="addStep" class="secondary">工程を追加</button>
-+      <button id="applySample" class="secondary">サンプルに戻す</button>
-+    </div>
-+  </section>
-+
-+  <section class="card">
-+    <div class="row">
-+      <button id="generate" class="primary">逆算スケジュール生成</button>
-+      <button id="copyCsv" class="secondary">結果をCSVコピー</button>
-+    </div>
-+    <div class="status" id="status"></div>
-+  </section>
-+
-+  <section class="card">
-+    <h2>3) 生成結果</h2>
-+    <div id="result" class="muted">まだ生成していません。</div>
-+  </section>
-+</div>
-+
-+<script>
-+(() => {
-+  const KEY = 'backward-planner-patterns-v1';
-+  const statusEl = document.getElementById('status');
-+  const resultEl = document.getElementById('result');
-+  const modeEl = document.getElementById('mode');
-+  const dueDateWrap = document.getElementById('dueDateWrap');
-+  const dueDateTimeWrap = document.getElementById('dueDateTimeWrap');
-+  const stepsTbody = document.querySelector('#stepsTable tbody');
-+  let latestRows = [];
-+
-+  const SAMPLE_STEPS = [
-+    { name: '出荷', amount: 1 },
-+    { name: '最終検査', amount: 1 },
-+    { name: '組立', amount: 2 },
-+    { name: '部材手配', amount: 2 }
-+  ];
-+
-+  function showStatus(text, isError = false) {
-+    statusEl.style.color = isError ? '#b91c1c' : '#0f766e';
-+    statusEl.textContent = text;
-+  }
-+
-+  function jpDate(d) {
-+    return d.toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short' });
-+  }
-+
-+  function jpDateTime(d) {
-+    return d.toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short', hour: '2-digit', minute: '2-digit' });
-+  }
-+
-+  function parseHolidaySet() {
-+    const raw = document.getElementById('holidayList').value;
-+    const set = new Set();
-+    raw.split(/\n+/).map(v => v.trim()).filter(Boolean).forEach(v => set.add(v));
-+    return set;
-+  }
-+
-+  function dateToISO(d) {
-+    const y = d.getFullYear();
-+    const m = String(d.getMonth() + 1).padStart(2, '0');
-+    const day = String(d.getDate()).padStart(2, '0');
-+    return `${y}-${m}-${day}`;
-+  }
-+
-+  function isNonWorkingDate(date, skipWeekend, holidaySet) {
-+    if (skipWeekend && (date.getDay() === 0 || date.getDay() === 6)) return true;
-+    return holidaySet.has(dateToISO(date));
-+  }
-+
-+  function previousWorkingDay(date, skipWeekend, holidaySet) {
-+    const d = new Date(date);
-+    d.setDate(d.getDate() - 1);
-+    while (isNonWorkingDate(d, skipWeekend, holidaySet)) d.setDate(d.getDate() - 1);
-+    return d;
-+  }
-+
-+  function parseTime(value) {
-+    const [h, m] = value.split(':').map(Number);
-+    if (Number.isNaN(h) || Number.isNaN(m)) return null;
-+    return { h, m };
-+  }
-+
-+  function moveToWorkEnd(date, workEnd) {
-+    const d = new Date(date);
-+    d.setHours(workEnd.h, workEnd.m, 0, 0);
-+    return d;
-+  }
-+
-+  function normalizeToWorkingMoment(date, workStart, workEnd, skipWeekend, holidaySet) {
-+    const d = new Date(date);
-+    while (isNonWorkingDate(d, skipWeekend, holidaySet)) {
-+      d.setDate(d.getDate() - 1);
-+      d.setHours(workEnd.h, workEnd.m, 0, 0);
-+    }
-+    const mins = d.getHours() * 60 + d.getMinutes();
-+    const startMins = workStart.h * 60 + workStart.m;
-+    const endMins = workEnd.h * 60 + workEnd.m;
-+    if (mins > endMins) d.setHours(workEnd.h, workEnd.m, 0, 0);
-+    if (mins < startMins) {
-+      d.setDate(d.getDate() - 1);
-+      d.setHours(workEnd.h, workEnd.m, 0, 0);
-+      while (isNonWorkingDate(d, skipWeekend, holidaySet)) {
-+        d.setDate(d.getDate() - 1);
-+        d.setHours(workEnd.h, workEnd.m, 0, 0);
-+      }
-+    }
-+    return d;
-+  }
-+
-+  function subtractWorkingHours(endAt, hours, workStart, workEnd, skipWeekend, holidaySet) {
-+    const out = normalizeToWorkingMoment(endAt, workStart, workEnd, skipWeekend, holidaySet);
-+    let remain = Math.round(hours * 60);
-+    const startMins = workStart.h * 60 + workStart.m;
-+    while (remain > 0) {
-+      const nowMins = out.getHours() * 60 + out.getMinutes();
-+      const available = nowMins - startMins;
-+      if (available <= 0) {
-+        out.setDate(out.getDate() - 1);
-+        out.setHours(workEnd.h, workEnd.m, 0, 0);
-+        while (isNonWorkingDate(out, skipWeekend, holidaySet)) {
-+          out.setDate(out.getDate() - 1);
-+          out.setHours(workEnd.h, workEnd.m, 0, 0);
-+        }
-+        continue;
-+      }
-+      const use = Math.min(remain, available);
-+      out.setMinutes(out.getMinutes() - use);
-+      remain -= use;
-+      if (remain > 0 && (out.getHours() * 60 + out.getMinutes()) <= startMins) {
-+        out.setDate(out.getDate() - 1);
-+        out.setHours(workEnd.h, workEnd.m, 0, 0);
-+        while (isNonWorkingDate(out, skipWeekend, holidaySet)) {
-+          out.setDate(out.getDate() - 1);
-+          out.setHours(workEnd.h, workEnd.m, 0, 0);
-+        }
-+      }
-+    }
-+    return out;
-+  }
-+
-+  function collectSteps() {
-+    const rows = [...stepsTbody.querySelectorAll('tr')].map(row => {
-+      const name = row.querySelector('.step-name').value.trim();
-+      const amount = Number(row.querySelector('.step-amount').value);
-+      return { name, amount };
-+    });
-+    if (!rows.length) throw new Error('工程を1つ以上設定してください。');
-+    rows.forEach((s, i) => {
-+      if (!s.name) throw new Error(`${i + 1}行目の工程名が空です。`);
-+      if (!Number.isFinite(s.amount) || s.amount <= 0) throw new Error(`${i + 1}行目の所要量は0より大きい値にしてください。`);
-+    });
-+    return rows;
-+  }
-+
-+  function renderSteps(steps) {
-+    stepsTbody.innerHTML = '';
-+    steps.forEach((s, idx) => addStepRow(s.name, s.amount, idx + 1));
-+    refreshStepNumbers();
-+  }
-+
-+  function refreshStepNumbers() {
-+    [...stepsTbody.querySelectorAll('tr')].forEach((row, idx) => {
-+      row.querySelector('.step-index').textContent = String(idx + 1);
-+    });
-+  }
-+
-+  function addStepRow(name = '', amount = 1, idx = 1) {
-+    const tr = document.createElement('tr');
-+    tr.innerHTML = `
-+      <td class="step-index">${idx}</td>
-+      <td><input class="step-name" value="${name.replace(/"/g, '&quot;')}" placeholder="工程名"></td>
-+      <td><input type="number" class="step-amount" value="${amount}" min="0.25" step="0.25"></td>
-+      <td><button type="button" class="danger del-step">×</button></td>
-+    `;
-+    tr.querySelector('.del-step').addEventListener('click', () => {
-+      tr.remove();
-+      refreshStepNumbers();
-+    });
-+    stepsTbody.appendChild(tr);
-+  }
-+
-+  function savePatterns(patternMap) {
-+    localStorage.setItem(KEY, JSON.stringify(patternMap));
-+  }
-+
-+  function loadPatterns() {
-+    try {
-+      return JSON.parse(localStorage.getItem(KEY) || '{}');
-+    } catch (e) {
-+      return {};
-+    }
-+  }
-+
-+  function refreshPatternSelect(selected = '') {
-+    const sel = document.getElementById('loadPattern');
-+    const map = loadPatterns();
-+    sel.innerHTML = '<option value="">--選択--</option>';
-+    Object.keys(map).sort().forEach(k => {
-+      const opt = document.createElement('option');
-+      opt.value = k;
-+      opt.textContent = k;
-+      if (k === selected) opt.selected = true;
-+      sel.appendChild(opt);
-+    });
-+  }
-+
-+  function generateSchedule() {
-+    const mode = modeEl.value;
-+    const steps = collectSteps();
-+    const holidaySet = parseHolidaySet();
-+    const skipWeekend = document.getElementById('skipWeekend').checked;
-+    const includeDue = document.getElementById('includeDue').checked;
-+
-+    if (mode === 'day') {
-+      const dueText = document.getElementById('dueDate').value;
-+      const due = new Date(dueText);
-+      if (!dueText || Number.isNaN(due.getTime())) throw new Error('納期日を入力してください。');
-+
-+      let cursor = new Date(due);
-+      if (isNonWorkingDate(cursor, skipWeekend, holidaySet)) {
-+        while (isNonWorkingDate(cursor, skipWeekend, holidaySet)) cursor = previousWorkingDay(cursor, skipWeekend, holidaySet);
-+      }
-+      if (!includeDue) cursor = previousWorkingDay(cursor, skipWeekend, holidaySet);
-+
-+      const rows = [];
-+      for (let i = 0; i < steps.length; i++) {
-+        const step = steps[i];
-+        rows.push({
-+          order: i + 1,
-+          name: step.name,
-+          amount: step.amount,
-+          start: new Date(cursor),
-+          end: new Date(cursor)
-+        });
-+        for (let c = 0; c < Math.ceil(step.amount); c++) cursor = previousWorkingDay(cursor, skipWeekend, holidaySet);
-+      }
-+      latestRows = rows;
-+      renderResult(rows, mode);
-+      showStatus(`生成完了: ${rows.length}工程（日単位）`);
-+      return;
-+    }
-+
-+    const dueText = document.getElementById('dueDateTime').value;
-+    const due = new Date(dueText);
-+    if (!dueText || Number.isNaN(due.getTime())) throw new Error('納期日時を入力してください。');
-+
-+    const workStart = parseTime(document.getElementById('workStart').value);
-+    const workEnd = parseTime(document.getElementById('workEnd').value);
-+    if (!workStart || !workEnd) throw new Error('勤務開始/終了時刻が不正です。');
-+    const startMins = workStart.h * 60 + workStart.m;
-+    const endMins = workEnd.h * 60 + workEnd.m;
-+    if (startMins >= endMins) throw new Error('勤務開始時刻は勤務終了時刻より前にしてください。');
-+
-+    let cursor = includeDue ? normalizeToWorkingMoment(due, workStart, workEnd, skipWeekend, holidaySet)
-+      : subtractWorkingHours(due, 0.001, workStart, workEnd, skipWeekend, holidaySet);
-+
-+    const rows = [];
-+    for (let i = 0; i < steps.length; i++) {
-+      const step = steps[i];
-+      const end = new Date(cursor);
-+      const start = subtractWorkingHours(cursor, step.amount, workStart, workEnd, skipWeekend, holidaySet);
-+      rows.push({ order: i + 1, name: step.name, amount: step.amount, start, end });
-+      cursor = new Date(start);
-+    }
-+    latestRows = rows;
-+    renderResult(rows, mode);
-+    showStatus(`生成完了: ${rows.length}工程（時間単位）`);
-+  }
-+
-+  function renderResult(rows, mode) {
-+    let html = '<table><thead><tr><th>#</th><th>工程</th><th>所要量</th><th>開始</th><th>終了/期限</th></tr></thead><tbody>';
-+    rows.forEach(r => {
-+      html += '<tr>' +
-+        `<td>${r.order}</td>` +
-+        `<td>${r.name}</td>` +
-+        `<td>${r.amount}${mode === 'day' ? '日' : '時間'}</td>` +
-+        `<td>${mode === 'day' ? jpDate(r.start) : jpDateTime(r.start)}</td>` +
-+        `<td>${mode === 'day' ? jpDate(r.end) : jpDateTime(r.end)}</td>` +
-+        '</tr>';
-+    });
-+    html += '</tbody></table>';
-+    resultEl.innerHTML = html;
-+  }
-+
-+  function copyCsv() {
-+    if (!latestRows.length) {
-+      showStatus('先にスケジュールを生成してください。', true);
-+      return;
-+    }
-+    const mode = modeEl.value;
-+    const header = ['順番', '工程名', '所要量', '開始', '終了/期限'];
-+    const rows = latestRows.map(r => [
-+      r.order,
-+      r.name,
-+      r.amount,
-+      mode === 'day' ? jpDate(r.start) : jpDateTime(r.start),
-+      mode === 'day' ? jpDate(r.end) : jpDateTime(r.end)
-+    ]);
-+    const csv = [header, ...rows]
-+      .map(line => line.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
-+      .join('\n');
-+    navigator.clipboard.writeText(csv)
-+      .then(() => showStatus('CSVをクリップボードにコピーしました。'))
-+      .catch(() => showStatus('コピーに失敗しました。ブラウザ権限を確認してください。', true));
-+  }
-+
-+  modeEl.addEventListener('change', () => {
-+    const hourMode = modeEl.value === 'hour';
-+    dueDateWrap.hidden = hourMode;
-+    dueDateTimeWrap.hidden = !hourMode;
-+  });
-+
-+  document.getElementById('addStep').addEventListener('click', () => addStepRow('', 1, stepsTbody.children.length + 1));
-+  document.getElementById('applySample').addEventListener('click', () => {
-+    renderSteps(SAMPLE_STEPS);
-+    showStatus('サンプル工程をセットしました。');
-+  });
-+  document.getElementById('generate').addEventListener('click', () => {
-+    try {
-+      generateSchedule();
-+    } catch (e) {
-+      showStatus(e.message || '生成に失敗しました。', true);
-+    }
-+  });
-+  document.getElementById('copyCsv').addEventListener('click', copyCsv);
-+
-+  document.getElementById('savePattern').addEventListener('click', () => {
-+    try {
-+      const name = document.getElementById('patternName').value.trim();
-+      if (!name) throw new Error('パターン名を入力してください。');
-+      const steps = collectSteps();
-+      const map = loadPatterns();
-+      map[name] = steps;
-+      savePatterns(map);
-+      refreshPatternSelect(name);
-+      showStatus(`パターン「${name}」を保存しました。`);
-+    } catch (e) {
-+      showStatus(e.message || '保存に失敗しました。', true);
-+    }
-+  });
-+
-+  document.getElementById('loadPattern').addEventListener('change', e => {
-+    const name = e.target.value;
-+    if (!name) return;
-+    const map = loadPatterns();
-+    if (!map[name]) return;
-+    renderSteps(map[name]);
-+    document.getElementById('patternName').value = name;
-+    showStatus(`パターン「${name}」を読み込みました。`);
-+  });
-+
-+  document.getElementById('deletePattern').addEventListener('click', () => {
-+    const sel = document.getElementById('loadPattern');
-+    const name = sel.value;
-+    if (!name) {
-+      showStatus('削除するパターンを選択してください。', true);
-+      return;
-+    }
-+    const map = loadPatterns();
-+    delete map[name];
-+    savePatterns(map);
-+    refreshPatternSelect();
-+    showStatus(`パターン「${name}」を削除しました。`);
-+  });
-+
-+  refreshPatternSelect();
-+  renderSteps(SAMPLE_STEPS);
-+  const now = new Date();
-+  document.getElementById('dueDate').value = dateToISO(now);
-+  document.getElementById('dueDateTime').value = `${dateToISO(now)}T18:00`;
-+
-+  if ('serviceWorker' in navigator) {
-+    window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js'));
-+  }
-+})();
-+</script>
-+</body>
-+</html>
- 
-EOF
-)
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>工程逆算スケジューラ</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#2563eb">
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #f3f6fc; color: #0f172a; }
+    .container { max-width: 1280px; margin: 0 auto; padding: 16px; }
+    .card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    h1 { margin: 4px 0; font-size: 1.35rem; }
+    h2 { margin: 4px 0 10px; font-size: 1.05rem; }
+    .lead { margin: 0 0 12px; color: #334155; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+    label { display: block; margin-bottom: 4px; font-size: .9rem; font-weight: 600; }
+    input, textarea, button, select {
+      width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 10px; font-size: 14px;
+    }
+    textarea { min-height: 72px; resize: vertical; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #dbe2ef; padding: 6px; font-size: .88rem; }
+    th { background: #eff6ff; }
+    .matrix th, .matrix td { min-width: 40px; text-align: center; padding: 4px; }
+    .left-col { min-width: 160px; text-align: left !important; }
+    .due-col { min-width: 110px; background: #fef9c3; }
+    .primary { background: #2563eb; color: #fff; border-color: #1d4ed8; cursor: pointer; }
+    .secondary { background: #e2e8f0; cursor: pointer; }
+    .danger { background: #fee2e2; cursor: pointer; }
+    .row { display: flex; gap: 8px; align-items: end; }
+    .row > * { flex: 1; }
+    .inline { display: flex; gap: 6px; align-items: center; }
+    .inline input { width: auto; }
+    .status { margin-top: 8px; min-height: 1.2em; font-weight: 600; color: #0f766e; }
+    .scroll { overflow-x: auto; }
+    .legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .chip { padding: 3px 8px; border-radius: 999px; font-size: .78rem; border: 1px solid #cbd5e1; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>工程逆算スケジューラ</h1>
+  <p class="lead">複数注文をまとめて表示。納期と作業手順（色付き）を登録し、日付スケールで残作業を見える化します。</p>
+
+  <section class="card">
+    <h2>1) 日付スケール設定</h2>
+    <div class="grid">
+      <div>
+        <label for="startDate">表示開始日</label>
+        <input type="date" id="startDate">
+      </div>
+      <div>
+        <label for="horizonDays">横に表示する営業日数</label>
+        <input type="number" id="horizonDays" min="5" max="90" value="25">
+      </div>
+      <label class="inline"><input type="checkbox" id="skipWeekend" checked> 土日を除外</label>
+    </div>
+    <label for="holidayList">追加休日（改行区切り / 例: 2026-02-11）</label>
+    <textarea id="holidayList"></textarea>
+  </section>
+
+  <section class="card">
+    <h2>2) 作業手順登録（工程色つき）</h2>
+    <div class="row">
+      <div>
+        <label for="patternName">パターン名</label>
+        <input id="patternName" placeholder="標準">
+      </div>
+      <div><button id="savePattern" class="secondary">保存</button></div>
+      <div>
+        <label for="loadPattern">保存済み</label>
+        <select id="loadPattern"></select>
+      </div>
+      <div><button id="deletePattern" class="danger">削除</button></div>
+    </div>
+    <table id="stepsTable" style="margin-top:10px;">
+      <thead><tr><th style="width:55px;">順</th><th>工程名</th><th style="width:120px;">日数</th><th style="width:100px;">色</th><th style="width:80px;">削除</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="row" style="margin-top:8px;">
+      <button id="addStep" class="secondary">工程追加</button>
+      <button id="applySample" class="secondary">サンプル復元</button>
+    </div>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <section class="card">
+    <h2>3) 注文登録（複数件）</h2>
+    <table id="ordersTable">
+      <thead><tr><th style="width:55px;">No</th><th>品名</th><th style="width:150px;">出荷日</th><th style="width:180px;">作業パターン</th><th style="width:80px;">削除</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="row" style="margin-top:8px;">
+      <button id="addOrder" class="secondary">注文行追加</button>
+      <button id="applyOrderSample" class="secondary">注文サンプル</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row">
+      <button id="generate" class="primary">一覧を生成</button>
+      <button id="copyCsv" class="secondary">CSVコピー</button>
+    </div>
+    <div class="status" id="status"></div>
+  </section>
+
+  <section class="card">
+    <h2>4) 出力（Excel風一覧）</h2>
+    <div id="result" class="scroll">まだ生成していません。</div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const KEY = 'scheduler-patterns-v2';
+  const stepsTbody = document.querySelector('#stepsTable tbody');
+  const ordersTbody = document.querySelector('#ordersTable tbody');
+  const resultEl = document.getElementById('result');
+  const statusEl = document.getElementById('status');
+  let latestMatrix = null;
+
+  const SAMPLE_STEPS = [
+    { name: '出荷', days: 1, color: '#f59e0b' },
+    { name: '検査', days: 1, color: '#8b5cf6' },
+    { name: '組立', days: 2, color: '#22c55e' },
+    { name: '部材準備', days: 2, color: '#38bdf8' }
+  ];
+
+  const SAMPLE_ORDERS = [
+    { product: 'SQ 14x25', dueDate: '2025-11-05' },
+    { product: 'SUN LR25T', dueDate: '2025-11-13' },
+    { product: 'ジット', dueDate: '2025-11-07' }
+  ];
+
+  function showStatus(text, isErr) {
+    statusEl.style.color = isErr ? '#b91c1c' : '#0f766e';
+    statusEl.textContent = text;
+  }
+
+  function toISO(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + d;
+  }
+
+  function parseHolidaySet() {
+    const raw = document.getElementById('holidayList').value;
+    const set = new Set();
+    raw.split(/\n+/).map(v => v.trim()).filter(Boolean).forEach(v => set.add(v));
+    return set;
+  }
+
+  function isWorkingDay(date, skipWeekend, holidaySet) {
+    if (skipWeekend && (date.getDay() === 0 || date.getDay() === 6)) return false;
+    return !holidaySet.has(toISO(date));
+  }
+
+  function previousWorkingDay(date, skipWeekend, holidaySet) {
+    const out = new Date(date);
+    out.setDate(out.getDate() - 1);
+    while (!isWorkingDay(out, skipWeekend, holidaySet)) out.setDate(out.getDate() - 1);
+    return out;
+  }
+
+  function nextWorkingDay(date, skipWeekend, holidaySet) {
+    const out = new Date(date);
+    out.setDate(out.getDate() + 1);
+    while (!isWorkingDay(out, skipWeekend, holidaySet)) out.setDate(out.getDate() + 1);
+    return out;
+  }
+
+  function dateLabel(date) {
+    return (date.getMonth() + 1) + '/' + date.getDate();
+  }
+
+  function weekdayLabel(date) {
+    return ['日', '月', '火', '水', '木', '金', '土'][date.getDay()];
+  }
+
+  function refreshIndices(tbody, selector) {
+    [].slice.call(tbody.querySelectorAll('tr')).forEach((tr, i) => {
+      tr.querySelector(selector).textContent = String(i + 1);
+    });
+  }
+
+  function addStepRow(step) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td class="step-index"></td>' +
+      '<td><input class="step-name" placeholder="工程名"></td>' +
+      '<td><input type="number" class="step-days" min="1" step="1" value="1"></td>' +
+      '<td><input type="color" class="step-color" value="#60a5fa"></td>' +
+      '<td><button type="button" class="danger del-step">×</button></td>';
+    tr.querySelector('.step-name').value = step && step.name ? step.name : '';
+    tr.querySelector('.step-days').value = step && step.days ? step.days : 1;
+    tr.querySelector('.step-color').value = step && step.color ? step.color : '#60a5fa';
+    tr.querySelector('.del-step').addEventListener('click', () => {
+      tr.remove();
+      refreshIndices(stepsTbody, '.step-index');
+      renderLegend();
+    });
+    tr.querySelector('.step-color').addEventListener('change', renderLegend);
+    tr.querySelector('.step-name').addEventListener('input', renderLegend);
+    stepsTbody.appendChild(tr);
+    refreshIndices(stepsTbody, '.step-index');
+  }
+
+  function collectSteps() {
+    const rows = [].slice.call(stepsTbody.querySelectorAll('tr')).map(tr => ({
+      name: tr.querySelector('.step-name').value.trim(),
+      days: Number(tr.querySelector('.step-days').value),
+      color: tr.querySelector('.step-color').value
+    }));
+    if (!rows.length) throw new Error('工程を1つ以上入力してください。');
+    rows.forEach((s, i) => {
+      if (!s.name) throw new Error((i + 1) + '行目の工程名が空です。');
+      if (!Number.isFinite(s.days) || s.days <= 0) throw new Error((i + 1) + '行目の日数が不正です。');
+    });
+    return rows;
+  }
+
+  function renderLegend() {
+    const legend = document.getElementById('legend');
+    const steps = collectStepsSafe();
+    legend.innerHTML = '';
+    steps.forEach(s => {
+      const span = document.createElement('span');
+      span.className = 'chip';
+      span.style.background = s.color;
+      span.textContent = s.name + ' (' + s.days + '日)';
+      legend.appendChild(span);
+    });
+  }
+
+  function collectStepsSafe() {
+    try { return collectSteps(); } catch (e) { return []; }
+  }
+
+  function loadPatterns() {
+    try { return JSON.parse(localStorage.getItem(KEY) || '{}'); }
+    catch (e) { return {}; }
+  }
+
+  function savePatterns(map) {
+    localStorage.setItem(KEY, JSON.stringify(map));
+  }
+
+  function refreshPatternSelect(selected) {
+    const sel = document.getElementById('loadPattern');
+    sel.innerHTML = '<option value="">--選択--</option>';
+    const map = loadPatterns();
+    Object.keys(map).sort().forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      if (selected && selected === name) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    refreshOrderPatternOptions();
+  }
+
+  function addOrderRow(order) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td class="order-index"></td>' +
+      '<td><input class="order-product" placeholder="品名"></td>' +
+      '<td><input type="date" class="order-due"></td>' +
+      '<td><select class="order-pattern"></select></td>' +
+      '<td><button type="button" class="danger del-order">×</button></td>';
+    tr.querySelector('.order-product').value = order && order.product ? order.product : '';
+    tr.querySelector('.order-due').value = order && order.dueDate ? order.dueDate : '';
+    tr.querySelector('.del-order').addEventListener('click', () => {
+      tr.remove();
+      refreshIndices(ordersTbody, '.order-index');
+    });
+    ordersTbody.appendChild(tr);
+    refreshOrderPatternOptions();
+    if (order && order.patternName) tr.querySelector('.order-pattern').value = order.patternName;
+    refreshIndices(ordersTbody, '.order-index');
+  }
+
+  function refreshOrderPatternOptions() {
+    const map = loadPatterns();
+    const names = Object.keys(map).sort();
+    [].slice.call(ordersTbody.querySelectorAll('.order-pattern')).forEach(sel => {
+      const keep = sel.value;
+      sel.innerHTML = '';
+      names.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        sel.appendChild(opt);
+      });
+      if (keep && names.indexOf(keep) >= 0) sel.value = keep;
+      else if (names.length) sel.value = names[0];
+    });
+  }
+
+  function collectOrders() {
+    const rows = [].slice.call(ordersTbody.querySelectorAll('tr')).map(tr => ({
+      product: tr.querySelector('.order-product').value.trim(),
+      dueDate: tr.querySelector('.order-due').value,
+      patternName: tr.querySelector('.order-pattern').value
+    }));
+    if (!rows.length) throw new Error('注文を1件以上入力してください。');
+    rows.forEach((r, i) => {
+      if (!r.product) throw new Error((i + 1) + '行目の品名が空です。');
+      if (!r.dueDate) throw new Error((i + 1) + '行目の出荷日が未入力です。');
+      if (!r.patternName) throw new Error((i + 1) + '行目の作業パターンが未選択です。');
+    });
+    return rows;
+  }
+
+  function buildTimelineDays(startDate, count, skipWeekend, holidaySet) {
+    const days = [];
+    let cur = new Date(startDate);
+    while (days.length < count) {
+      if (isWorkingDay(cur, skipWeekend, holidaySet)) days.push(new Date(cur));
+      cur = nextWorkingDay(cur, false, new Set());
+    }
+    return days;
+  }
+
+  function calcOrderTasks(order, steps, skipWeekend, holidaySet) {
+    const due = new Date(order.dueDate);
+    if (Number.isNaN(due.getTime())) throw new Error(order.product + ' の出荷日が不正です。');
+    let cursor = new Date(due);
+    while (!isWorkingDay(cursor, skipWeekend, holidaySet)) cursor = previousWorkingDay(cursor, skipWeekend, holidaySet);
+
+    const tasks = [];
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      let stepEnd = new Date(cursor);
+      let start = new Date(cursor);
+      for (let d = 1; d < step.days; d++) start = previousWorkingDay(start, skipWeekend, holidaySet);
+      tasks.push({ name: step.name, color: step.color, start: new Date(start), end: new Date(stepEnd), days: step.days });
+      cursor = previousWorkingDay(start, skipWeekend, holidaySet);
+    }
+    return tasks;
+  }
+
+  function findTaskForDate(tasks, day) {
+    const t = day.getTime();
+    for (let i = tasks.length - 1; i >= 0; i--) {
+      const task = tasks[i];
+      if (task.start.getTime() <= t && t <= task.end.getTime()) return task;
+    }
+    return null;
+  }
+
+  function generate() {
+    const map = loadPatterns();
+    const orders = collectOrders();
+    const startText = document.getElementById('startDate').value;
+    const horizon = Number(document.getElementById('horizonDays').value);
+    const skipWeekend = document.getElementById('skipWeekend').checked;
+    const holidaySet = parseHolidaySet();
+
+    if (!startText) throw new Error('表示開始日を入力してください。');
+    if (!Number.isFinite(horizon) || horizon < 5) throw new Error('営業日数は5以上を入力してください。');
+
+    const timelineDays = buildTimelineDays(new Date(startText), horizon, skipWeekend, holidaySet);
+    const table = document.createElement('table');
+    table.className = 'matrix';
+
+    const thead = document.createElement('thead');
+    const rDate = document.createElement('tr');
+    rDate.innerHTML = '<th class="left-col">日付</th><th class="due-col">出荷日</th>';
+    timelineDays.forEach(d => {
+      const th = document.createElement('th');
+      th.textContent = dateLabel(d);
+      rDate.appendChild(th);
+    });
+    const rWeek = document.createElement('tr');
+    rWeek.innerHTML = '<th class="left-col">曜日</th><th class="due-col"></th>';
+    timelineDays.forEach(d => {
+      const th = document.createElement('th');
+      th.textContent = weekdayLabel(d);
+      rWeek.appendChild(th);
+    });
+    thead.appendChild(rDate);
+    thead.appendChild(rWeek);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    const csvRows = [['品名', '出荷日'].concat(timelineDays.map(d => toISO(d)))];
+
+    orders.forEach(order => {
+      const steps = map[order.patternName];
+      if (!steps) throw new Error('未登録パターンです: ' + order.patternName);
+      const tasks = calcOrderTasks(order, steps, skipWeekend, holidaySet);
+      const tr = document.createElement('tr');
+      const tName = document.createElement('td');
+      tName.className = 'left-col';
+      tName.textContent = order.product;
+      tr.appendChild(tName);
+      const tDue = document.createElement('td');
+      tDue.className = 'due-col';
+      tDue.textContent = order.dueDate;
+      tr.appendChild(tDue);
+
+      const csvLine = [order.product, order.dueDate];
+      timelineDays.forEach(day => {
+        const td = document.createElement('td');
+        const task = findTaskForDate(tasks, day);
+        if (task) {
+          td.style.background = task.color;
+          td.title = task.name + ' (' + task.days + '日)';
+          td.textContent = task.name;
+          csvLine.push(task.name);
+        } else {
+          csvLine.push('');
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+      csvRows.push(csvLine);
+    });
+
+    table.appendChild(tbody);
+    resultEl.innerHTML = '';
+    resultEl.appendChild(table);
+    latestMatrix = csvRows;
+    showStatus('生成完了: ' + orders.length + '件 / ' + horizon + '営業日を表示');
+  }
+
+  function copyCsv() {
+    if (!latestMatrix) return showStatus('先に一覧を生成してください。', true);
+    const csv = latestMatrix
+      .map(row => row.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(','))
+      .join('\n');
+    navigator.clipboard.writeText(csv)
+      .then(() => showStatus('CSVをコピーしました。'))
+      .catch(() => showStatus('コピーに失敗しました。', true));
+  }
+
+  document.getElementById('addStep').addEventListener('click', () => addStepRow());
+  document.getElementById('applySample').addEventListener('click', () => {
+    stepsTbody.innerHTML = '';
+    SAMPLE_STEPS.forEach(addStepRow);
+    renderLegend();
+  });
+
+  document.getElementById('savePattern').addEventListener('click', () => {
+    try {
+      const name = document.getElementById('patternName').value.trim();
+      if (!name) throw new Error('パターン名を入力してください。');
+      const map = loadPatterns();
+      map[name] = collectSteps();
+      savePatterns(map);
+      refreshPatternSelect(name);
+      showStatus('パターン「' + name + '」を保存しました。');
+    } catch (e) {
+      showStatus(e.message, true);
+    }
+  });
+
+  document.getElementById('loadPattern').addEventListener('change', e => {
+    const name = e.target.value;
+    const map = loadPatterns();
+    if (!name || !map[name]) return;
+    stepsTbody.innerHTML = '';
+    map[name].forEach(addStepRow);
+    document.getElementById('patternName').value = name;
+    renderLegend();
+  });
+
+  document.getElementById('deletePattern').addEventListener('click', () => {
+    const name = document.getElementById('loadPattern').value;
+    if (!name) return showStatus('削除するパターンを選択してください。', true);
+    const map = loadPatterns();
+    delete map[name];
+    savePatterns(map);
+    refreshPatternSelect('');
+    showStatus('パターン「' + name + '」を削除しました。');
+  });
+
+  document.getElementById('addOrder').addEventListener('click', () => addOrderRow());
+  document.getElementById('applyOrderSample').addEventListener('click', () => {
+    ordersTbody.innerHTML = '';
+    SAMPLE_ORDERS.forEach(o => addOrderRow({ product: o.product, dueDate: o.dueDate, patternName: '標準' }));
+  });
+  document.getElementById('generate').addEventListener('click', () => {
+    try { generate(); } catch (e) { showStatus(e.message, true); }
+  });
+  document.getElementById('copyCsv').addEventListener('click', copyCsv);
+
+  const today = new Date();
+  document.getElementById('startDate').value = toISO(today);
+
+  const defaultMap = loadPatterns();
+  if (!defaultMap['標準']) {
+    defaultMap['標準'] = SAMPLE_STEPS;
+    savePatterns(defaultMap);
+  }
+  refreshPatternSelect('標準');
+  stepsTbody.innerHTML = '';
+  loadPatterns()['標準'].forEach(addStepRow);
+  renderLegend();
+  addOrderRow({ product: '', dueDate: '', patternName: '標準' });
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js'));
+  }
+})();
+</script>
+</body>
+</html>
