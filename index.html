@@ -351,6 +351,8 @@
   function generate() {
     const map = loadPatterns();
     const orders = collectOrders();
+    const activePatternName = document.getElementById('loadPattern').value;
+    const activeDraftSteps = collectStepsSafe();
     const startText = document.getElementById('startDate').value;
     const horizon = Number(document.getElementById('horizonDays').value);
     const skipWeekend = document.getElementById('skipWeekend').checked;
@@ -386,7 +388,9 @@
     const csvRows = [['品名', '出荷日'].concat(timelineDays.map(d => toISO(d)))];
 
     orders.forEach(order => {
-      const steps = map[order.patternName];
+      const steps = order.patternName === activePatternName && activeDraftSteps.length
+        ? activeDraftSteps
+        : map[order.patternName];
       if (!steps) throw new Error('未登録パターンです: ' + order.patternName);
       const tasks = calcOrderTasks(order, steps, skipWeekend, holidaySet);
       const tr = document.createElement('tr');
