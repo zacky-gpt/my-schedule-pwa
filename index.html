@@ -36,6 +36,9 @@
     .scroll { overflow-x: auto; }
     .legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .chip { padding: 3px 8px; border-radius: 999px; font-size: .78rem; border: 1px solid #cbd5e1; }
+    .color-cell { display: flex; align-items: center; gap: 6px; }
+    .color-preview { width: 18px; height: 18px; border-radius: 999px; border: 1px solid #94a3b8; flex: 0 0 18px; }
+    .step-color { min-width: 52px; padding: 2px; height: 34px; }
   </style>
 </head>
 <body>
@@ -185,22 +188,39 @@
     });
   }
 
+  function paintColorControl(inputEl, previewEl) {
+    const color = inputEl.value;
+    inputEl.style.background = color;
+    inputEl.style.borderColor = color;
+    previewEl.style.background = color;
+  }
+
   function addStepRow(step) {
     const tr = document.createElement('tr');
     tr.innerHTML = '<td class="step-index"></td>' +
       '<td><input class="step-name" placeholder="工程名"></td>' +
       '<td><input type="number" class="step-days" min="1" step="1" value="1"></td>' +
-      '<td><input type="color" class="step-color" value="#60a5fa"></td>' +
+      '<td><div class="color-cell"><span class="color-preview"></span><input type="color" class="step-color" value="#60a5fa"></div></td>' +
       '<td><button type="button" class="danger del-step">×</button></td>';
     tr.querySelector('.step-name').value = step && step.name ? step.name : '';
     tr.querySelector('.step-days').value = step && step.days ? step.days : 1;
-    tr.querySelector('.step-color').value = step && step.color ? step.color : '#60a5fa';
+    const colorInput = tr.querySelector('.step-color');
+    const colorPreview = tr.querySelector('.color-preview');
+    colorInput.value = step && step.color ? step.color : '#60a5fa';
     tr.querySelector('.del-step').addEventListener('click', () => {
       tr.remove();
       refreshIndices(stepsTbody, '.step-index');
       renderLegend();
     });
-    tr.querySelector('.step-color').addEventListener('change', renderLegend);
+    paintColorControl(colorInput, colorPreview);
+    colorInput.addEventListener('input', () => {
+      paintColorControl(colorInput, colorPreview);
+      renderLegend();
+    });
+    colorInput.addEventListener('change', () => {
+      paintColorControl(colorInput, colorPreview);
+      renderLegend();
+    });
     tr.querySelector('.step-name').addEventListener('input', renderLegend);
     stepsTbody.appendChild(tr);
     refreshIndices(stepsTbody, '.step-index');
