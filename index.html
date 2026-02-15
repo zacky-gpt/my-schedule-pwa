@@ -131,7 +131,7 @@
     </table></div>
     <div class="row" style="margin-top:8px;">
       <button id="addOrder" class="secondary">注文行追加</button>
-      <button id="applyOrderSample" class="secondary">注文サンプル</button>
+      <button id="clearOrders" class="danger">注文をクリア</button>
     </div>
   </section>
 
@@ -192,12 +192,6 @@
     { name: '検査', days: 1, color: '#8b5cf6' },
     { name: '組立', days: 2, color: '#22c55e' },
     { name: '部材準備', days: 2, color: '#38bdf8' }
-  ];
-
-  const SAMPLE_ORDERS = [
-    { product: 'SQ 14x25', dueDate: '2025-11-05' },
-    { product: 'SUN LR25T', dueDate: '2025-11-13' },
-    { product: 'ジット', dueDate: '2025-11-07' }
   ];
 
   function showStatus(text, isErr) {
@@ -705,9 +699,11 @@
   });
 
   document.getElementById('addOrder').addEventListener('click', () => { addOrderRow(); saveAppState(); });
-  document.getElementById('applyOrderSample').addEventListener('click', () => {
+  document.getElementById('clearOrders').addEventListener('click', () => {
+    if (!window.confirm('登録済みの注文をすべて削除します。本当にいいですか？')) return;
     ordersTbody.innerHTML = '';
-    SAMPLE_ORDERS.forEach(o => addOrderRow({ product: o.product, dueDate: o.dueDate, patternName: '標準' }));
+    addOrderRow({ product: '', dueDate: '', patternName: '標準' });
+    showStatus('注文をクリアしました。');
     saveAppState();
   });
   document.getElementById('generate').addEventListener('click', () => {
