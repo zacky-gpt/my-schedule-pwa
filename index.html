@@ -7,7 +7,7 @@
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#2563eb">
   <style>
-    :root { --print-cell-size: 36px; }
+    :root { --print-cell-size: 36px; --print-row-lines: 2; }
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #f3f6fc; color: #0f172a; }
     .container { max-width: 1280px; margin: 0 auto; padding: 16px; }
     .card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
@@ -49,6 +49,9 @@
       .print-target { display: block !important; margin: 0; padding: 0; box-shadow: none; border-radius: 0; }
       #result { overflow: visible; }
       .matrix th, .matrix td { min-width: var(--print-cell-size); padding: 2px; font-size: 10px; }
+      .matrix td { min-height: calc(var(--print-row-lines) * 1.2em + 6px); line-height: 1.2; vertical-align: middle; }
+      .matrix td, .matrix th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      html[data-print-color='mono'] .matrix td { background: #fff !important; color: #111 !important; }
       .left-col { min-width: 34mm; }
       .due-col { min-width: 24mm; }
     }
@@ -148,6 +151,21 @@
         <label for="printCellSize">印刷セル幅（24〜56px）</label>
         <input type="range" id="printCellSize" min="24" max="56" value="36">
       </div>
+      <div>
+        <label for="printRowLines">印刷セルの縦行数</label>
+        <select id="printRowLines">
+          <option value="1">1行</option>
+          <option value="2" selected>2行</option>
+          <option value="3">3行</option>
+        </select>
+      </div>
+      <div>
+        <label for="printColorMode">印刷カラー</label>
+        <select id="printColorMode">
+          <option value="color" selected>カラー</option>
+          <option value="mono">白黒</option>
+        </select>
+      </div>
       <button id="printPdf" class="secondary">印刷 / PDF出力</button>
     </div>
     <div class="status" id="status"></div>
@@ -187,10 +205,17 @@
     statusEl.textContent = text;
   }
 
-  function applyPrintCellSize() {
-    const value = Number(document.getElementById('printCellSize').value) || 36;
-    const clamped = Math.max(24, Math.min(56, value));
-    document.documentElement.style.setProperty('--print-cell-size', clamped + 'px');
+  function applyPrintSettings() {
+    const cellValue = Number(document.getElementById('printCellSize').value) || 36;
+    const cellClamped = Math.max(24, Math.min(56, cellValue));
+    document.documentElement.style.setProperty('--print-cell-size', cellClamped + 'px');
+
+    const rowLines = Number(document.getElementById('printRowLines').value) || 2;
+    const rowClamped = Math.max(1, Math.min(3, rowLines));
+    document.documentElement.style.setProperty('--print-row-lines', String(rowClamped));
+
+    const colorMode = document.getElementById('printColorMode').value === 'mono' ? 'mono' : 'color';
+    document.documentElement.setAttribute('data-print-color', colorMode);
   }
 
   function toISO(date) {
@@ -404,7 +429,9 @@
       horizonDays: document.getElementById('horizonDays').value,
       skipWeekend: document.getElementById('skipWeekend').checked,
       holidayList: document.getElementById('holidayList').value,
-      printCellSize: document.getElementById('printCellSize').value
+      printCellSize: document.getElementById('printCellSize').value,
+      printRowLines: document.getElementById('printRowLines').value,
+      printColorMode: document.getElementById('printColorMode').value
     };
   }
 
@@ -432,6 +459,8 @@
       document.getElementById('skipWeekend').checked = state.settings.skipWeekend !== false;
       document.getElementById('holidayList').value = state.settings.holidayList || '';
       if (state.settings.printCellSize) document.getElementById('printCellSize').value = state.settings.printCellSize;
+      if (state.settings.printRowLines) document.getElementById('printRowLines').value = state.settings.printRowLines;
+      if (state.settings.printColorMode) document.getElementById('printColorMode').value = state.settings.printColorMode;
     }
     if (Array.isArray(state.orders) && state.orders.length) {
       ordersTbody.innerHTML = '';
@@ -697,9 +726,11 @@
     document.getElementById(id).addEventListener('input', saveAppState);
   });
   document.getElementById('skipWeekend').addEventListener('change', saveAppState);
-  document.getElementById('printCellSize').addEventListener('input', () => { applyPrintCellSize(); saveAppState(); });
+  document.getElementById('printCellSize').addEventListener('input', () => { applyPrintSettings(); saveAppState(); });
+  document.getElementById('printRowLines').addEventListener('change', () => { applyPrintSettings(); saveAppState(); });
+  document.getElementById('printColorMode').addEventListener('change', () => { applyPrintSettings(); saveAppState(); });
   document.getElementById('printPdf').addEventListener('click', () => {
-    applyPrintCellSize();
+    applyPrintSettings();
     window.print();
   });
 
@@ -716,7 +747,7 @@
   loadPatterns()['標準'].forEach(addStepRow);
   renderLegend();
   restoreAppState();
-  applyPrintCellSize();
+  applyPrintSettings();
   if (!ordersTbody.querySelector('tr')) addOrderRow({ product: '', dueDate: '', patternName: '標準' });
   refreshBackupSelect();
   saveAppState();
@@ -728,3 +759,93 @@
 </script>
 </body>
 </html>
+manifest.json
+manifest.json
++10
+-13
+
+{
+{
+  "name": "工程逆算くん",
+  "name": "工程逆算スケジューラ",
+  "short_name": "工程逆算",
+  "short_name": "逆算表",
+  "start_url": "./",
+  "start_url": "./",
+  "scope": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "background_color": "#f3f6fc",
+  "theme_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "icons": [
+  "description": "納期から逆算して工程の期限・時間帯を生成できるPWA"
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+}
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
+service-worker.js
+service-worker.js
++32
+-25
+
+const CACHE = 'kogtei-v1';
+const CACHE = 'backward-scheduler-v3';
+const ASSETS = [
+const ASSETS = ['./', './index.html', './manifest.json', './service-worker.js'];
+  './',
+
+  './index.html',
+self.addEventListener('install', event => {
+  './manifest.json',
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
+  './icons/icon-192.png',
+  self.skipWaiting();
+  './icons/icon-512.png'
+});
+];
+
+
+self.addEventListener('activate', event => {
+self.addEventListener('install', e => {
+  event.waitUntil(
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
+    caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key))))
+});
+  );
+
+  self.clients.claim();
+self.addEventListener('activate', e => {
+});
+  e.waitUntil(
+
+    caches.keys().then(keys =>
+self.addEventListener('fetch', event => {
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+  const { request } = event;
+  );
+  if (request.mode === 'navigate') {
+});
+    event.respondWith(
+
+      fetch(request)
+self.addEventListener('fetch', e => {
+        .then(response => {
+  e.respondWith(
+          const copy = response.clone();
+    caches.match(e.request).then(res => res || fetch(e.request))
+          caches.open(CACHE).then(cache => cache.put('./index.html', copy));
+  );
+          return response;
+});
+        })
+        .catch(() => caches.match('./index.html'))
+    );
+    return;
+  }
+
+  event.respondWith(caches.match(request).then(cached => cached || fetch(request)));
+});
