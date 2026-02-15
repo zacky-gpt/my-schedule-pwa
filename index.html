@@ -1,4 +1,4 @@
--<!doctype html>
+ -<!doctype html>
 -<meta charset="utf-8">
 -<meta name="viewport" content="width=device-width,initial-scale=1">
 -<title>工程逆算くん</title>
@@ -416,7 +416,7 @@
 +    const tr = document.createElement('tr');
 +    tr.innerHTML = `
 +      <td class="step-index">${idx}</td>
-+      <td><input class="step-name" value="${name.replaceAll('"', '&quot;')}" placeholder="工程名"></td>
++      <td><input class="step-name" value="${name.replace(/"/g, '&quot;')}" placeholder="工程名"></td>
 +      <td><input type="number" class="step-amount" value="${amount}" min="0.25" step="0.25"></td>
 +      <td><button type="button" class="danger del-step">×</button></td>
 +    `;
@@ -434,7 +434,7 @@
 +  function loadPatterns() {
 +    try {
 +      return JSON.parse(localStorage.getItem(KEY) || '{}');
-+    } catch {
++    } catch (e) {
 +      return {};
 +    }
 +  }
@@ -545,7 +545,7 @@
 +      mode === 'day' ? jpDate(r.end) : jpDateTime(r.end)
 +    ]);
 +    const csv = [header, ...rows]
-+      .map(line => line.map(v => `"${String(v).replaceAll('"', '""')}"`).join(','))
++      .map(line => line.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
 +      .join('\n');
 +    navigator.clipboard.writeText(csv)
 +      .then(() => showStatus('CSVをクリップボードにコピーしました。'))
@@ -624,3 +624,6 @@
 +</script>
 +</body>
 +</html>
+ 
+EOF
+)
