@@ -117,6 +117,7 @@
 <script>
 (() => {
   const KEY = 'scheduler-patterns-v2';
+  const STATE_KEY = 'scheduler-state-v1';
   const stepsTbody = document.querySelector('#stepsTable tbody');
   const ordersTbody = document.querySelector('#ordersTable tbody');
   const resultEl = document.getElementById('result');
@@ -211,15 +212,18 @@
       tr.remove();
       refreshIndices(stepsTbody, '.step-index');
       renderLegend();
+      saveAppState();
     });
     paintColorControl(colorInput, colorPreview);
     colorInput.addEventListener('input', () => {
       paintColorControl(colorInput, colorPreview);
       renderLegend();
+      saveAppState();
     });
     colorInput.addEventListener('change', () => {
       paintColorControl(colorInput, colorPreview);
       renderLegend();
+      saveAppState();
     });
     tr.querySelector('.step-name').addEventListener('input', renderLegend);
     stepsTbody.appendChild(tr);
@@ -292,7 +296,11 @@
     tr.querySelector('.del-order').addEventListener('click', () => {
       tr.remove();
       refreshIndices(ordersTbody, '.order-index');
+      saveAppState();
     });
+    tr.querySelector('.order-product').addEventListener('input', saveAppState);
+    tr.querySelector('.order-due').addEventListener('change', saveAppState);
+    tr.querySelector('.order-pattern').addEventListener('change', saveAppState);
     ordersTbody.appendChild(tr);
     refreshOrderPatternOptions();
     if (order && order.patternName) tr.querySelector('.order-pattern').value = order.patternName;
@@ -329,6 +337,53 @@
       if (!r.patternName) throw new Error((i + 1) + '行目の作業パターンが未選択です。');
     });
     return rows;
+  }
+
+  function collectOrdersForState() {
+    return [].slice.call(ordersTbody.querySelectorAll('tr')).map(tr => ({
+      product: tr.querySelector('.order-product').value.trim(),
+      dueDate: tr.querySelector('.order-due').value,
+      patternName: tr.querySelector('.order-pattern').value
+    }));
+  }
+
+  function getSettingsState() {
+    return {
+      startDate: document.getElementById('startDate').value,
+      horizonDays: document.getElementById('horizonDays').value,
+      skipWeekend: document.getElementById('skipWeekend').checked,
+      holidayList: document.getElementById('holidayList').value
+    };
+  }
+
+  function saveAppState() {
+    const state = {
+      settings: getSettingsState(),
+      orders: collectOrdersForState()
+    };
+    localStorage.setItem(STATE_KEY, JSON.stringify(state));
+  }
+
+  function loadAppState() {
+    try {
+      return JSON.parse(localStorage.getItem(STATE_KEY) || '{}');
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function restoreAppState() {
+    const state = loadAppState();
+    if (state.settings) {
+      if (state.settings.startDate) document.getElementById('startDate').value = state.settings.startDate;
+      if (state.settings.horizonDays) document.getElementById('horizonDays').value = state.settings.horizonDays;
+      document.getElementById('skipWeekend').checked = state.settings.skipWeekend !== false;
+      document.getElementById('holidayList').value = state.settings.holidayList || '';
+    }
+    if (Array.isArray(state.orders) && state.orders.length) {
+      ordersTbody.innerHTML = '';
+      state.orders.forEach(order => addOrderRow(order));
+    }
   }
 
   function buildTimelineDays(startDate, count, skipWeekend, holidaySet) {
@@ -463,6 +518,7 @@
     stepsTbody.innerHTML = '';
     SAMPLE_STEPS.forEach(addStepRow);
     renderLegend();
+    saveAppState();
   });
 
   document.getElementById('savePattern').addEventListener('click', () => {
@@ -474,6 +530,7 @@
       savePatterns(map);
       refreshPatternSelect(name);
       showStatus('パターン「' + name + '」を保存しました。');
+      saveAppState();
     } catch (e) {
       showStatus(e.message, true);
     }
@@ -487,6 +544,7 @@
     map[name].forEach(addStepRow);
     document.getElementById('patternName').value = name;
     renderLegend();
+    saveAppState();
   });
 
   document.getElementById('deletePattern').addEventListener('click', () => {
@@ -497,17 +555,23 @@
     savePatterns(map);
     refreshPatternSelect('');
     showStatus('パターン「' + name + '」を削除しました。');
+    saveAppState();
   });
 
-  document.getElementById('addOrder').addEventListener('click', () => addOrderRow());
+  document.getElementById('addOrder').addEventListener('click', () => { addOrderRow(); saveAppState(); });
   document.getElementById('applyOrderSample').addEventListener('click', () => {
     ordersTbody.innerHTML = '';
     SAMPLE_ORDERS.forEach(o => addOrderRow({ product: o.product, dueDate: o.dueDate, patternName: '標準' }));
+    saveAppState();
   });
   document.getElementById('generate').addEventListener('click', () => {
     try { generate(); } catch (e) { showStatus(e.message, true); }
   });
   document.getElementById('copyCsv').addEventListener('click', copyCsv);
+  ['startDate', 'horizonDays', 'holidayList'].forEach(id => {
+    document.getElementById(id).addEventListener('input', saveAppState);
+  });
+  document.getElementById('skipWeekend').addEventListener('change', saveAppState);
 
   const today = new Date();
   document.getElementById('startDate').value = toISO(today);
@@ -521,7 +585,9 @@
   stepsTbody.innerHTML = '';
   loadPatterns()['標準'].forEach(addStepRow);
   renderLegend();
-  addOrderRow({ product: '', dueDate: '', patternName: '標準' });
+  restoreAppState();
+  if (!ordersTbody.querySelector('tr')) addOrderRow({ product: '', dueDate: '', patternName: '標準' });
+  saveAppState();
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js'));
