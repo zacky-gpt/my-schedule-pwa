@@ -42,6 +42,11 @@
     .color-preview { width: 18px; height: 18px; border-radius: 999px; border: 1px solid #94a3b8; flex: 0 0 18px; }
     .step-color { min-width: 52px; padding: 2px; height: 34px; }
     .matrix-stack { display: flex; flex-direction: column; gap: 10px; }
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: none; align-items: center; justify-content: center; z-index: 30; }
+    .modal-backdrop.open { display: flex; }
+    .modal-card { width: min(560px, calc(100vw - 24px)); background: #fff; border-radius: 12px; padding: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.2); }
+    .modal-title { margin: 0 0 8px; font-size: 1rem; }
+    .modal-actions { display: flex; gap: 8px; margin-top: 8px; }
 
     @page { size: A4 landscape; margin: 10mm; }
     @media print {
@@ -75,7 +80,6 @@
       .matrix th, .matrix td { min-width: 52px; font-size: .78rem; padding: 4px 3px; }
       .left-col { min-width: 120px; }
       .due-col { min-width: 92px; }
-      #deleteLocal { max-width: 220px; }
     }
   </style>
 </head>
@@ -129,7 +133,7 @@
   <section class="card">
     <h2>3) 注文登録（複数件）</h2>
     <div class="scroll"><table id="ordersTable">
-      <thead><tr><th style="width:55px;">No</th><th>品名</th><th style="width:150px;">出荷日</th><th style="width:180px;">作業パターン</th><th style="width:80px;">削除</th></tr></thead>
+      <thead><tr><th style="width:55px;">No</th><th>品名</th><th style="width:150px;">出荷日</th><th style="width:120px;">設定</th><th style="width:180px;">作業パターン</th><th style="width:80px;">削除</th></tr></thead>
       <tbody></tbody>
     </table></div>
     <div class="row" style="margin-top:8px;">
@@ -141,13 +145,9 @@
   <section class="card">
     <div class="row">
       <button id="generate" class="primary">一覧を生成</button>
-      <button id="saveLocal" class="secondary">ローカルに保存</button>
-      <button id="loadLocal" class="secondary">呼び出す</button>
-    </div>
-    <div class="row" style="margin-top:8px;">
-      <input id="localSaveName" placeholder="保存名（例: 2026-02-15時点）">
-      <select id="localDataSelect"></select>
-      <button id="deleteLocal" class="danger">保存データ削除</button>
+      <button id="importJson" class="secondary">JSON読込</button>
+      <button id="exportJson" class="secondary">JSON保存</button>
+      <input type="file" id="jsonFileInput" accept=".json,application/json" style="display:none;">
     </div>
     <div class="row" style="margin-top:8px;">
       <div>
@@ -183,15 +183,66 @@
   </section>
 </div>
 
+<div id="scheduleModal" class="modal-backdrop" aria-hidden="true">
+  <div class="modal-card">
+    <h3 class="modal-title">繰り返し設定</h3>
+    <div class="grid">
+      <div>
+        <label for="scheduleMode">モード</label>
+        <select id="scheduleMode">
+          <option value="fixed">固定日（出荷日欄を使用）</option>
+          <option value="recurring">繰り返し</option>
+        </select>
+      </div>
+      <div id="recurringTypeWrap">
+        <label for="recurringType">繰り返し種別</label>
+        <select id="recurringType">
+          <option value="weekly">毎週（曜日指定）</option>
+          <option value="nth_weekday">第n週の曜日</option>
+          <option value="monthly_day">毎月日付</option>
+        </select>
+      </div>
+      <div id="weekdayWrap">
+        <label for="recurringWeekday">曜日</label>
+        <select id="recurringWeekday">
+          <option value="1">月</option><option value="2">火</option><option value="3">水</option><option value="4">木</option><option value="5">金</option><option value="6">土</option><option value="0">日</option>
+        </select>
+      </div>
+      <div id="nthWrap" style="display:none;">
+        <label for="recurringNth">第n週</label>
+        <select id="recurringNth">
+          <option value="1">第1</option><option value="2">第2</option><option value="3">第3</option><option value="4">第4</option><option value="5">第5</option>
+        </select>
+      </div>
+      <div id="monthDayWrap" style="display:none;">
+        <label for="recurringMonthDay">日付</label>
+        <input id="recurringMonthDay" type="number" min="1" max="31" value="25">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button id="saveSchedule" class="primary" type="button">設定を保存</button>
+      <button id="cancelSchedule" class="secondary" type="button">キャンセル</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (() => {
-  const KEY = 'scheduler-patterns-v2';
-  const STATE_KEY = 'scheduler-state-v1';
-  const BACKUP_KEY = 'scheduler-backups-v1';
+  const appData = {
+    patterns: {},
+    state: {
+      settings: {},
+      orders: []
+    },
+    backups: {}
+  };
   const stepsTbody = document.querySelector('#stepsTable tbody');
   const ordersTbody = document.querySelector('#ordersTable tbody');
   const resultEl = document.getElementById('result');
   const statusEl = document.getElementById('status');
+  const scheduleModal = document.getElementById('scheduleModal');
+  let editingScheduleRow = null;
+  const SESSION_CACHE_KEY = 'scheduler-session-cache-v1';
 
   const SAMPLE_STEPS = [
     { name: '出荷', days: 1, color: '#f59e0b' },
@@ -338,12 +389,12 @@
   }
 
   function loadPatterns() {
-    try { return JSON.parse(localStorage.getItem(KEY) || '{}'); }
-    catch (e) { return {}; }
+    return appData.patterns;
   }
 
   function savePatterns(map) {
-    localStorage.setItem(KEY, JSON.stringify(map));
+    appData.patterns = map && typeof map === 'object' ? map : {};
+    persistSessionCache();
   }
 
   function refreshPatternSelect(selected) {
@@ -360,11 +411,84 @@
     refreshOrderPatternOptions();
   }
 
+  function normalizeOrderSchedule(raw) {
+    const safe = raw && typeof raw === 'object' ? raw : {};
+    const mode = safe.mode === 'recurring' ? 'recurring' : 'fixed';
+    const rule = safe.rule && typeof safe.rule === 'object' ? safe.rule : null;
+    return { mode, rule };
+  }
+
+  function describeOrderSchedule(schedule) {
+    const s = normalizeOrderSchedule(schedule);
+    if (s.mode !== 'recurring' || !s.rule) return '固定日';
+    const wd = ['日', '月', '火', '水', '木', '金', '土'];
+    if (s.rule.type === 'weekly') return '毎週' + wd[Number(s.rule.weekday) || 0];
+    if (s.rule.type === 'nth_weekday') return '第' + (Number(s.rule.nth) || 1) + wd[Number(s.rule.weekday) || 0];
+    if (s.rule.type === 'monthly_day') return '毎月' + (Number(s.rule.day) || 1) + '日';
+    return '繰返';
+  }
+
+  function setRowSchedule(tr, schedule) {
+    const normalized = normalizeOrderSchedule(schedule);
+    tr.dataset.schedule = JSON.stringify(normalized);
+    tr.querySelector('.order-schedule-btn').textContent = describeOrderSchedule(normalized);
+  }
+
+  function getRowSchedule(tr) {
+    try {
+      return normalizeOrderSchedule(JSON.parse(tr.dataset.schedule || '{"mode":"fixed","rule":null}'));
+    } catch (e) {
+      return { mode: 'fixed', rule: null };
+    }
+  }
+
+  function toggleRecurringFields() {
+    const mode = document.getElementById('scheduleMode').value;
+    const type = document.getElementById('recurringType').value;
+    document.getElementById('recurringTypeWrap').style.display = mode === 'recurring' ? 'block' : 'none';
+    document.getElementById('weekdayWrap').style.display = mode === 'recurring' ? 'block' : 'none';
+    document.getElementById('nthWrap').style.display = (mode === 'recurring' && type === 'nth_weekday') ? 'block' : 'none';
+    document.getElementById('monthDayWrap').style.display = (mode === 'recurring' && type === 'monthly_day') ? 'block' : 'none';
+  }
+
+  function openScheduleModal(tr) {
+    editingScheduleRow = tr;
+    const schedule = getRowSchedule(tr);
+    document.getElementById('scheduleMode').value = schedule.mode;
+    if (schedule.rule && schedule.rule.type) document.getElementById('recurringType').value = schedule.rule.type;
+    if (schedule.rule && schedule.rule.weekday != null) document.getElementById('recurringWeekday').value = String(schedule.rule.weekday);
+    if (schedule.rule && schedule.rule.nth != null) document.getElementById('recurringNth').value = String(schedule.rule.nth);
+    if (schedule.rule && schedule.rule.day != null) document.getElementById('recurringMonthDay').value = String(schedule.rule.day);
+    toggleRecurringFields();
+    scheduleModal.classList.add('open');
+    scheduleModal.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeScheduleModal() {
+    scheduleModal.classList.remove('open');
+    scheduleModal.setAttribute('aria-hidden', 'true');
+    editingScheduleRow = null;
+  }
+
+  function buildScheduleFromModal() {
+    const mode = document.getElementById('scheduleMode').value;
+    if (mode !== 'recurring') return { mode: 'fixed', rule: null };
+    const type = document.getElementById('recurringType').value;
+    if (type === 'weekly') {
+      return { mode: 'recurring', rule: { type: 'weekly', weekday: Number(document.getElementById('recurringWeekday').value) } };
+    }
+    if (type === 'nth_weekday') {
+      return { mode: 'recurring', rule: { type: 'nth_weekday', nth: Number(document.getElementById('recurringNth').value), weekday: Number(document.getElementById('recurringWeekday').value) } };
+    }
+    return { mode: 'recurring', rule: { type: 'monthly_day', day: Number(document.getElementById('recurringMonthDay').value) } };
+  }
+
   function addOrderRow(order) {
     const tr = document.createElement('tr');
     tr.innerHTML = '<td class="order-index"></td>' +
       '<td><input class="order-product" placeholder="品名"></td>' +
       '<td><input type="date" class="order-due"></td>' +
+      '<td><button type="button" class="secondary order-schedule-btn">固定日</button></td>' +
       '<td><select class="order-pattern"></select></td>' +
       '<td><button type="button" class="danger del-order">×</button></td>';
     tr.querySelector('.order-product').value = order && order.product ? order.product : '';
@@ -377,7 +501,9 @@
     tr.querySelector('.order-product').addEventListener('input', saveAppState);
     tr.querySelector('.order-due').addEventListener('change', saveAppState);
     tr.querySelector('.order-pattern').addEventListener('change', saveAppState);
+    tr.querySelector('.order-schedule-btn').addEventListener('click', () => openScheduleModal(tr));
     ordersTbody.appendChild(tr);
+    setRowSchedule(tr, order && order.schedule ? order.schedule : { mode: 'fixed', rule: null });
     refreshOrderPatternOptions();
     if (order && order.patternName) tr.querySelector('.order-pattern').value = order.patternName;
     refreshIndices(ordersTbody, '.order-index');
@@ -404,12 +530,14 @@
     const rows = [].slice.call(ordersTbody.querySelectorAll('tr')).map(tr => ({
       product: tr.querySelector('.order-product').value.trim(),
       dueDate: tr.querySelector('.order-due').value,
-      patternName: tr.querySelector('.order-pattern').value
+      patternName: tr.querySelector('.order-pattern').value,
+      schedule: getRowSchedule(tr)
     }));
     if (!rows.length) throw new Error('注文を1件以上入力してください。');
     rows.forEach((r, i) => {
       if (!r.product) throw new Error((i + 1) + '行目の品名が空です。');
-      if (!r.dueDate) throw new Error((i + 1) + '行目の出荷日が未入力です。');
+      if (r.schedule.mode !== 'recurring' && !r.dueDate) throw new Error((i + 1) + '行目の出荷日が未入力です。');
+      if (r.schedule.mode === 'recurring' && !r.schedule.rule) throw new Error((i + 1) + '行目の繰り返し設定が未入力です。');
       if (!r.patternName) throw new Error((i + 1) + '行目の作業パターンが未選択です。');
     });
     return rows;
@@ -419,8 +547,104 @@
     return [].slice.call(ordersTbody.querySelectorAll('tr')).map(tr => ({
       product: tr.querySelector('.order-product').value.trim(),
       dueDate: tr.querySelector('.order-due').value,
-      patternName: tr.querySelector('.order-pattern').value
+      patternName: tr.querySelector('.order-pattern').value,
+      schedule: getRowSchedule(tr)
     }));
+  }
+
+  function nthWeekdayOfMonth(year, month, nth, weekday) {
+    const first = new Date(year, month, 1);
+    const shift = (weekday - first.getDay() + 7) % 7;
+    const day = 1 + shift + (nth - 1) * 7;
+    const out = new Date(year, month, day);
+    if (out.getMonth() !== month) return null;
+    return out;
+  }
+
+  function nextRecurringDate(schedule, fromDate) {
+    const s = normalizeOrderSchedule(schedule);
+    const from = new Date(fromDate);
+    from.setHours(0, 0, 0, 0);
+    if (s.mode !== 'recurring' || !s.rule) return null;
+    if (s.rule.type === 'weekly') {
+      const target = Number(s.rule.weekday);
+      const out = new Date(from);
+      const add = (target - out.getDay() + 7) % 7;
+      out.setDate(out.getDate() + add);
+      return out;
+    }
+    if (s.rule.type === 'nth_weekday') {
+      const nth = Math.max(1, Math.min(5, Number(s.rule.nth) || 1));
+      const weekday = Number(s.rule.weekday) || 0;
+      for (let i = 0; i < 24; i++) {
+        const base = new Date(from.getFullYear(), from.getMonth() + i, 1);
+        const hit = nthWeekdayOfMonth(base.getFullYear(), base.getMonth(), nth, weekday);
+        if (hit && hit >= from) return hit;
+      }
+      return null;
+    }
+    if (s.rule.type === 'monthly_day') {
+      const day = Math.max(1, Math.min(31, Number(s.rule.day) || 1));
+      for (let i = 0; i < 24; i++) {
+        const base = new Date(from.getFullYear(), from.getMonth() + i, 1);
+        const monthEnd = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+        const out = new Date(base.getFullYear(), base.getMonth(), Math.min(day, monthEnd));
+        if (out >= from) return out;
+      }
+      return null;
+    }
+    return null;
+  }
+
+  function adjustDueDateToWorkingDay(date, skipWeekend, holidaySet) {
+    let out = new Date(date);
+    while (!isWorkingDay(out, skipWeekend, holidaySet)) out = previousWorkingDay(out, skipWeekend, holidaySet);
+    return out;
+  }
+
+  function recurringDatesInRange(schedule, rangeStart, rangeEnd) {
+    const out = [];
+    let cursor = nextRecurringDate(schedule, rangeStart);
+    let guard = 0;
+    while (cursor && cursor <= rangeEnd && guard < 240) {
+      out.push(new Date(cursor));
+      const nextBase = new Date(cursor);
+      nextBase.setDate(nextBase.getDate() + 1);
+      cursor = nextRecurringDate(schedule, nextBase);
+      guard += 1;
+    }
+    return out;
+  }
+
+  function resolveOrdersForGenerate(orders, rangeStart, rangeEnd, skipWeekend, holidaySet) {
+    const resolved = [];
+    orders.forEach(order => {
+      if (order.schedule && order.schedule.mode === 'recurring') {
+        const dates = recurringDatesInRange(order.schedule, rangeStart, rangeEnd);
+        const adjusted = dates.map(date => toISO(adjustDueDateToWorkingDay(date, skipWeekend, holidaySet)));
+        resolved.push(Object.assign({}, order, {
+          resolvedDueDates: adjusted,
+          dueDate: adjusted[0] || ''
+        }));
+      } else {
+        const baseDate = new Date(order.dueDate);
+        const adjusted = toISO(adjustDueDateToWorkingDay(baseDate, skipWeekend, holidaySet));
+        resolved.push(Object.assign({}, order, {
+          resolvedDueDates: adjusted ? [adjusted] : [],
+          dueDate: adjusted
+        }));
+      }
+    });
+    return resolved;
+  }
+
+  function formatDueCellText(order) {
+    const dueDates = Array.isArray(order.resolvedDueDates) ? order.resolvedDueDates : [];
+    if (order.schedule && order.schedule.mode === 'recurring') {
+      if (!dueDates.length) return '繰返(対象なし)';
+      return dueDates[0] + '〜 (' + dueDates.length + '回)';
+    }
+    return order.dueDate || '';
   }
 
   function getSettingsState() {
@@ -441,15 +665,12 @@
       settings: getSettingsState(),
       orders: collectOrdersForState()
     };
-    localStorage.setItem(STATE_KEY, JSON.stringify(state));
+    appData.state = state;
+    persistSessionCache();
   }
 
   function loadAppState() {
-    try {
-      return JSON.parse(localStorage.getItem(STATE_KEY) || '{}');
-    } catch (e) {
-      return {};
-    }
+    return appData.state && typeof appData.state === 'object' ? appData.state : {};
   }
 
   function restoreAppState() {
@@ -473,83 +694,111 @@
   }
 
   function loadBackups() {
-    try {
-      return JSON.parse(localStorage.getItem(BACKUP_KEY) || '{}');
-    } catch (e) {
-      return {};
-    }
+    return appData.backups && typeof appData.backups === 'object' ? appData.backups : {};
   }
 
   function saveBackups(backups) {
-    localStorage.setItem(BACKUP_KEY, JSON.stringify(backups));
+    appData.backups = backups && typeof backups === 'object' ? backups : {};
+    persistSessionCache();
   }
 
-  function refreshBackupSelect(selected) {
-    const sel = document.getElementById('localDataSelect');
-    const backups = loadBackups();
-    sel.innerHTML = '<option value="">保存データを選択</option>';
-    Object.keys(backups).sort().forEach(name => {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      if (selected && selected === name) opt.selected = true;
-      sel.appendChild(opt);
-    });
+  function persistSessionCache() {
+    try {
+      const payload = {
+        patterns: appData.patterns,
+        state: appData.state,
+        backups: appData.backups
+      };
+      sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(payload));
+    } catch (e) {}
   }
 
-  function saveLocalSnapshot() {
-    const name = document.getElementById('localSaveName').value.trim() || ('保存_' + new Date().toISOString().slice(0,16).replace('T','_'));
-    const backups = loadBackups();
-    backups[name] = {
-      savedAt: new Date().toISOString(),
-      state: {
-        settings: getSettingsState(),
-        orders: collectOrdersForState()
-      },
-      patterns: loadPatterns()
+  function restoreSessionCache() {
+    try {
+      const raw = sessionStorage.getItem(SESSION_CACHE_KEY);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      const normalized = normalizeImportedData(parsed);
+      appData.patterns = normalized.patterns;
+      appData.state = normalized.state;
+      appData.backups = normalized.backups;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function normalizeImportedData(raw) {
+    const safe = raw && typeof raw === 'object' ? raw : {};
+    const rawOrders = safe.state && safe.state.orders;
+    return {
+      patterns: safe.patterns && typeof safe.patterns === 'object' ? safe.patterns : {},
+      state: safe.state && typeof safe.state === 'object'
+        ? {
+            settings: safe.state.settings && typeof safe.state.settings === 'object' ? safe.state.settings : {},
+            orders: Array.isArray(rawOrders)
+              ? rawOrders.map(order => ({
+                  product: order && order.product ? String(order.product) : '',
+                  dueDate: order && order.dueDate ? String(order.dueDate) : '',
+                  patternName: order && order.patternName ? String(order.patternName) : '',
+                  schedule: normalizeOrderSchedule(order && order.schedule ? order.schedule : null)
+                }))
+              : []
+          }
+        : { settings: {}, orders: [] },
+      backups: safe.backups && typeof safe.backups === 'object' ? safe.backups : {}
     };
-    saveBackups(backups);
-    refreshBackupSelect(name);
-    showStatus('ローカル保存しました: ' + name);
   }
 
-  function loadLocalSnapshot() {
-    const name = document.getElementById('localDataSelect').value;
-    if (!name) throw new Error('呼び出す保存データを選択してください。');
-    const backups = loadBackups();
-    const data = backups[name];
-    if (!data) throw new Error('保存データが見つかりません。');
-
-    if (data.patterns && typeof data.patterns === 'object') {
-      savePatterns(data.patterns);
-      refreshPatternSelect('標準');
-    }
-
-    if (data.state && data.state.settings) {
-      const st = data.state.settings;
-      if (st.startDate) document.getElementById('startDate').value = st.startDate;
-      if (st.horizonDays) document.getElementById('horizonDays').value = st.horizonDays;
-      document.getElementById('skipWeekend').checked = st.skipWeekend !== false;
-      document.getElementById('holidayList').value = st.holidayList || '';
-    }
-
-    if (data.state && Array.isArray(data.state.orders)) {
-      ordersTbody.innerHTML = '';
-      data.state.orders.forEach(order => addOrderRow(order));
-    }
-
+  function exportJsonData() {
     saveAppState();
-    showStatus('呼び出しました: ' + name);
+    const payload = {
+      patterns: loadPatterns(),
+      state: loadAppState(),
+      backups: loadBackups()
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'scheduler-data-' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-') + '.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showStatus('JSON保存しました。');
   }
 
-  function deleteLocalSnapshot() {
-    const name = document.getElementById('localDataSelect').value;
-    if (!name) throw new Error('削除する保存データを選択してください。');
-    const backups = loadBackups();
-    delete backups[name];
-    saveBackups(backups);
-    refreshBackupSelect();
-    showStatus('削除しました: ' + name);
+  function importJsonData(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result || '{}'));
+        const data = normalizeImportedData(parsed);
+        savePatterns(data.patterns);
+        saveBackups(data.backups);
+        appData.state = data.state;
+
+        refreshPatternSelect('標準');
+        const selectedName = loadPatterns()['標準'] ? '標準' : Object.keys(loadPatterns())[0];
+        stepsTbody.innerHTML = '';
+        if (selectedName && loadPatterns()[selectedName]) {
+          loadPatterns()[selectedName].forEach(addStepRow);
+          document.getElementById('patternName').value = selectedName;
+          document.getElementById('loadPattern').value = selectedName;
+        }
+        renderLegend();
+        restoreAppState();
+        applyPrintSettings();
+        if (!ordersTbody.querySelector('tr')) addOrderRow({ product: '', dueDate: '', patternName: selectedName || '標準' });
+        saveAppState();
+        showStatus('JSON読込しました。');
+      } catch (e) {
+        showStatus('JSON読込に失敗しました: ' + e.message, true);
+      }
+    };
+    reader.onerror = () => showStatus('JSONファイルの読込に失敗しました。', true);
+    reader.readAsText(file);
   }
 
   function buildTimelineDays(startDate, count, skipWeekend, holidaySet) {
@@ -625,7 +874,11 @@
         ? activeDraftSteps
         : map[order.patternName];
       if (!steps) throw new Error('未登録パターンです: ' + order.patternName);
-      const tasks = calcOrderTasks(order, steps, skipWeekend, holidaySet);
+      const dueDates = Array.isArray(order.resolvedDueDates) ? order.resolvedDueDates : [order.dueDate];
+      const tasks = [];
+      dueDates.filter(Boolean).forEach(dueDate => {
+        calcOrderTasks(Object.assign({}, order, { dueDate }), steps, skipWeekend, holidaySet).forEach(t => tasks.push(t));
+      });
 
       const tr = document.createElement('tr');
       const tName = document.createElement('td');
@@ -634,7 +887,7 @@
       tr.appendChild(tName);
       const tDue = document.createElement('td');
       tDue.className = 'due-col';
-      tDue.textContent = order.dueDate;
+      tDue.textContent = formatDueCellText(order);
       tr.appendChild(tDue);
 
       daySlice.forEach(day => {
@@ -656,7 +909,6 @@
 
   function generate() {
     const map = loadPatterns();
-    const orders = collectOrders();
     const activePatternName = document.getElementById('loadPattern').value;
     const activeDraftSteps = collectStepsSafe();
     const startText = document.getElementById('startDate').value;
@@ -668,6 +920,9 @@
     if (!Number.isFinite(horizon) || horizon < 5) throw new Error('営業日数は5以上を入力してください。');
 
     const timelineDays = buildTimelineDays(new Date(startText), horizon, skipWeekend, holidaySet);
+    const timelineStart = timelineDays[0];
+    const timelineEnd = timelineDays[timelineDays.length - 1];
+    const orders = resolveOrdersForGenerate(collectOrders(), timelineStart, timelineEnd, skipWeekend, holidaySet);
     const wrapMode = document.getElementById('printWrapDays').value;
     const wrapDays = wrapMode === '15' ? 15 : 0;
     const dayChunks = chunkTimelineDays(timelineDays, wrapDays);
@@ -739,14 +994,31 @@
   document.getElementById('generate').addEventListener('click', () => {
     try { generate(); } catch (e) { showStatus(e.message, true); }
   });
-  document.getElementById('saveLocal').addEventListener('click', () => {
-    try { saveLocalSnapshot(); } catch (e) { showStatus(e.message, true); }
+  document.getElementById('importJson').addEventListener('click', () => {
+    document.getElementById('jsonFileInput').click();
   });
-  document.getElementById('loadLocal').addEventListener('click', () => {
-    try { loadLocalSnapshot(); } catch (e) { showStatus(e.message, true); }
+  document.getElementById('exportJson').addEventListener('click', () => {
+    try { exportJsonData(); } catch (e) { showStatus(e.message, true); }
   });
-  document.getElementById('deleteLocal').addEventListener('click', () => {
-    try { deleteLocalSnapshot(); } catch (e) { showStatus(e.message, true); }
+  document.getElementById('jsonFileInput').addEventListener('change', e => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    importJsonData(file);
+    e.target.value = '';
+  });
+  document.getElementById('scheduleMode').addEventListener('change', toggleRecurringFields);
+  document.getElementById('recurringType').addEventListener('change', toggleRecurringFields);
+  document.getElementById('saveSchedule').addEventListener('click', () => {
+    if (!editingScheduleRow) return;
+    const schedule = buildScheduleFromModal();
+    setRowSchedule(editingScheduleRow, schedule);
+    saveAppState();
+    closeScheduleModal();
+    showStatus('繰り返し設定を保存しました。');
+  });
+  document.getElementById('cancelSchedule').addEventListener('click', closeScheduleModal);
+  scheduleModal.addEventListener('click', e => {
+    if (e.target === scheduleModal) closeScheduleModal();
   });
   ['startDate', 'horizonDays', 'holidayList'].forEach(id => {
     document.getElementById(id).addEventListener('input', saveAppState);
@@ -764,6 +1036,8 @@
   const today = new Date();
   document.getElementById('startDate').value = toISO(today);
 
+  const restoredFromSession = restoreSessionCache();
+
   const defaultMap = loadPatterns();
   if (!defaultMap['標準']) {
     defaultMap['標準'] = SAMPLE_STEPS;
@@ -776,8 +1050,8 @@
   restoreAppState();
   applyPrintSettings();
   if (!ordersTbody.querySelector('tr')) addOrderRow({ product: '', dueDate: '', patternName: '標準' });
-  refreshBackupSelect();
   saveAppState();
+  if (restoredFromSession) showStatus('ページ再読込のため一時キャッシュを復元しました。確定保存はJSON保存を使ってください。');
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js'));
