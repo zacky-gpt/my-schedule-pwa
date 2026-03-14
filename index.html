@@ -106,6 +106,13 @@
     </div>
     <label for="holidayList">追加休日（改行区切り / 例: 2026-02-11）</label>
     <textarea id="holidayList"></textarea>
+    <div class="row" style="margin-top:6px;">
+      <div>
+        <label for="holidayPicker">カレンダーから追加</label>
+        <input type="date" id="holidayPicker">
+      </div>
+      <div><button id="addHoliday" class="secondary" type="button">追加</button></div>
+    </div>
   </section>
 
   <section class="card">
@@ -284,6 +291,23 @@
     const set = new Set();
     raw.split(/\n+/).map(v => v.trim()).filter(Boolean).forEach(v => set.add(v));
     return set;
+  }
+  function addHolidayFromPicker() {
+    const input = document.getElementById('holidayPicker');
+    if (!input) return;
+    const value = input.value;
+    if (!value) return;
+    const area = document.getElementById('holidayList');
+    const lines = area.value.split(/\n+/).map(v => v.trim()).filter(Boolean);
+    if (!lines.includes(value)) {
+      lines.push(value);
+      area.value = lines.join('\n');
+      saveAppState();
+      showStatus('休日を追加しました');
+    } else {
+      showStatus('既に追加済みです', true);
+    }
+    input.value = '';
   }
 
   function isWorkingDay(date, skipWeekend, holidaySet) {
@@ -1049,6 +1073,10 @@
   });
   ['startDate', 'horizonDays', 'holidayList'].forEach(id => {
     document.getElementById(id).addEventListener('input', saveAppState);
+  });
+  document.getElementById('addHoliday').addEventListener('click', addHolidayFromPicker);
+  document.getElementById('holidayPicker').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); addHolidayFromPicker(); }
   });
   document.getElementById('skipWeekend').addEventListener('change', saveAppState);
   document.getElementById('printCellWidth').addEventListener('input', () => { applyPrintSettings(); saveAppState(); });
