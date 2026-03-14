@@ -41,6 +41,9 @@
     .color-cell { display: flex; align-items: center; gap: 6px; }
     .color-preview { width: 18px; height: 18px; border-radius: 999px; border: 1px solid #94a3b8; flex: 0 0 18px; }
     .step-color { min-width: 52px; padding: 2px; height: 34px; }
+    .reorder-col { width: 90px; }
+    .reorder-group { display: flex; gap: 4px; justify-content: center; }
+    .reorder-group button { width: auto; padding: 4px 6px; font-size: 12px; }
     .matrix-stack { display: flex; flex-direction: column; gap: 10px; }
     .modal-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: none; align-items: center; justify-content: center; z-index: 30; }
     .modal-backdrop.open { display: flex; }
@@ -120,7 +123,7 @@
       <div><button id="deletePattern" class="danger">削除</button></div>
     </div>
     <div class="scroll"><table id="stepsTable" style="margin-top:10px;">
-      <thead><tr><th style="width:55px;">順</th><th>工程名</th><th style="width:120px;">日数</th><th style="width:100px;">色</th><th style="width:80px;">削除</th></tr></thead>
+      <thead><tr><th style="width:55px;">順</th><th class="reorder-col">並替</th><th>工程名</th><th style="width:120px;">日数</th><th style="width:100px;">色</th><th style="width:80px;">削除</th></tr></thead>
       <tbody></tbody>
     </table></div>
     <div class="row" style="margin-top:8px;">
@@ -133,7 +136,7 @@
   <section class="card">
     <h2>3) 注文登録（複数件）</h2>
     <div class="scroll"><table id="ordersTable">
-      <thead><tr><th style="width:55px;">No</th><th>品名</th><th style="width:150px;">出荷日</th><th style="width:120px;">設定</th><th style="width:180px;">作業パターン</th><th style="width:80px;">削除</th></tr></thead>
+      <thead><tr><th style="width:55px;">No</th><th class="reorder-col">並替</th><th>品名</th><th style="width:150px;">出荷日</th><th style="width:120px;">設定</th><th style="width:180px;">作業パターン</th><th style="width:80px;">削除</th></tr></thead>
       <tbody></tbody>
     </table></div>
     <div class="row" style="margin-top:8px;">
@@ -316,6 +319,16 @@
     });
   }
 
+  function moveRow(tr, direction, tbody, indexSelector, afterMove) {
+    const other = direction < 0 ? tr.previousElementSibling : tr.nextElementSibling;
+    if (!other) return;
+    if (direction < 0) tbody.insertBefore(tr, other);
+    else tbody.insertBefore(other, tr);
+    refreshIndices(tbody, indexSelector);
+    if (typeof afterMove === 'function') afterMove();
+  }
+
+
   function paintColorControl(inputEl, previewEl) {
     const color = inputEl.value;
     inputEl.style.background = color;
@@ -326,6 +339,7 @@
   function addStepRow(step) {
     const tr = document.createElement('tr');
     tr.innerHTML = '<td class="step-index"></td>' +
+      '<td class=\'reorder-col\'><div class=\'reorder-group\'><button type=\'button\' class=\'secondary move-up\' title=\'Up\'>&uarr;</button><button type=\'button\' class=\'secondary move-down\' title=\'Down\'>&darr;</button></div></td>' +
       '<td><input class="step-name" placeholder="工程名"></td>' +
       '<td><input type="number" class="step-days" min="1" step="1" value="1"></td>' +
       '<td><div class="color-cell"><span class="color-preview"></span><input type="color" class="step-color" value="#60a5fa"></div></td>' +
@@ -340,6 +354,12 @@
       refreshIndices(stepsTbody, '.step-index');
       renderLegend();
       saveAppState();
+    });
+    tr.querySelector('.move-up').addEventListener('click', () => {
+      moveRow(tr, -1, stepsTbody, '.step-index', () => { renderLegend(); saveAppState(); });
+    });
+    tr.querySelector('.move-down').addEventListener('click', () => {
+      moveRow(tr, 1, stepsTbody, '.step-index', () => { renderLegend(); saveAppState(); });
     });
     paintColorControl(colorInput, colorPreview);
     colorInput.addEventListener('input', () => {
@@ -486,6 +506,7 @@
   function addOrderRow(order) {
     const tr = document.createElement('tr');
     tr.innerHTML = '<td class="order-index"></td>' +
+      '<td class=\'reorder-col\'><div class=\'reorder-group\'><button type=\'button\' class=\'secondary move-up\' title=\'Up\'>&uarr;</button><button type=\'button\' class=\'secondary move-down\' title=\'Down\'>&darr;</button></div></td>' +
       '<td><input class="order-product" placeholder="品名"></td>' +
       '<td><input type="date" class="order-due"></td>' +
       '<td><button type="button" class="secondary order-schedule-btn">固定日</button></td>' +
@@ -497,6 +518,12 @@
       tr.remove();
       refreshIndices(ordersTbody, '.order-index');
       saveAppState();
+    });
+    tr.querySelector('.move-up').addEventListener('click', () => {
+      moveRow(tr, -1, ordersTbody, '.order-index', saveAppState);
+    });
+    tr.querySelector('.move-down').addEventListener('click', () => {
+      moveRow(tr, 1, ordersTbody, '.order-index', saveAppState);
     });
     tr.querySelector('.order-product').addEventListener('input', saveAppState);
     tr.querySelector('.order-due').addEventListener('change', saveAppState);
