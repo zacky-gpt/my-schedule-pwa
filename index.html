@@ -104,18 +104,18 @@
         <input type="number" id="horizonDays" min="5" max="90" value="25">
       </div>
       <div>
-        <label for="displayMode">?????</label>
+        <label for="displayMode">表示モード</label>
         <select id="displayMode">
-          <option value="daily" selected>??</option>
-          <option value="monthly">??</option>
+          <option value="daily" selected>日次</option>
+          <option value="monthly">月次</option>
         </select>
       </div>
       <div>
-        <label for="monthlyStartMonth">???</label>
+        <label for="monthlyStartMonth">開始月</label>
         <input type="month" id="monthlyStartMonth">
       </div>
       <div>
-        <label for="horizonMonths">????</label>
+        <label for="horizonMonths">表示月数</label>
         <input type="number" id="horizonMonths" min="6" max="120" value="24">
       </div>
       <label class="inline"><input type="checkbox" id="skipWeekend" checked> 土日を除外</label>
@@ -169,14 +169,14 @@
   </section>
 
   <section class="card hidden" id="maintenanceSection">
-    <h2>3B) ???????????</h2>
+    <h2>3B) メンテナンスタスク登録</h2>
     <div class="scroll"><table id="maintenanceTable">
-      <thead><tr><th style="width:55px;">No</th><th class="reorder-col">??</th><th>???</th><th>???</th><th style="width:140px;">???</th><th style="width:120px;">??(?)</th><th style="width:100px;">?</th><th style="width:80px;">??</th></tr></thead>
+      <thead><tr><th style="width:55px;">No</th><th class="reorder-col">並替</th><th>物品名</th><th>タスク</th><th style="width:140px;">開始月</th><th style="width:120px;">周期(月)</th><th style="width:100px;">色</th><th style="width:80px;">削除</th></tr></thead>
       <tbody></tbody>
     </table></div>
     <div class="row" style="margin-top:8px;">
-      <button id="addMaintenanceTask" class="secondary">?????</button>
-      <button id="clearMaintenanceTasks" class="danger">???????</button>
+      <button id="addMaintenanceTask" class="secondary">タスク追加</button>
+      <button id="clearMaintenanceTasks" class="danger">タスクをクリア</button>
     </div>
   </section>
 
@@ -779,13 +779,13 @@
     const normalized = normalizeMaintenanceTask(task);
     const tr = document.createElement('tr');
     tr.innerHTML = '<td class="maintenance-index"></td>' +
-      '<td class="reorder-col"><div class="reorder-group"><button type="button" class="secondary move-up" title="??">&uarr;</button><button type="button" class="secondary move-down" title="??">&darr;</button></div></td>' +
-      '<td><input class="maintenance-item" placeholder="???"></td>' +
-      '<td><input class="maintenance-task" placeholder="????"></td>' +
+      '<td class="reorder-col"><div class="reorder-group"><button type="button" class="secondary move-up" title="上へ">&uarr;</button><button type="button" class="secondary move-down" title="下へ">&darr;</button></div></td>' +
+      '<td><input class="maintenance-item" placeholder="物品名"></td>' +
+      '<td><input class="maintenance-task" placeholder="タスク名"></td>' +
       '<td><input type="month" class="maintenance-start"></td>' +
       '<td><input type="number" class="maintenance-interval" min="1" step="1" value="12"></td>' +
       '<td><input type="color" class="maintenance-color" value="#60a5fa"></td>' +
-      '<td><button type="button" class="danger del-maintenance">??</button></td>';
+      '<td><button type="button" class="danger del-maintenance">削除</button></td>';
     tr.querySelector('.maintenance-item').value = normalized.itemName;
     tr.querySelector('.maintenance-task').value = normalized.taskName;
     tr.querySelector('.maintenance-start').value = normalized.startMonth;
@@ -859,7 +859,7 @@
     table.className = 'matrix';
     const thead = document.createElement('thead');
     const row = document.createElement('tr');
-    row.innerHTML = '<th class="left-col">?? / ???</th><th class="due-col">??? / ??</th>';
+    row.innerHTML = '<th class="left-col">物品 / タスク</th><th class="due-col">開始月 / 周期</th>';
     monthSlice.forEach(monthDate => {
       const th = document.createElement('th');
       th.textContent = monthLabel(monthDate);
@@ -904,7 +904,7 @@
     monthChunks.forEach(slice => stack.appendChild(buildMonthlyMatrixTable(slice, tasks)));
     resultEl.innerHTML = '';
     resultEl.appendChild(stack);
-    showStatus('???????????: ' + tasks.length + '? / ' + horizonMonths + '??');
+    showStatus('月次スケジュールを表示: ' + tasks.length + '件 / ' + horizonMonths + 'か月');
   }
 
   function getSettingsState() {
