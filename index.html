@@ -44,6 +44,7 @@
     .reorder-col { width: 90px; }
     .reorder-group { display: flex; gap: 4px; justify-content: center; }
     .reorder-group button { width: auto; padding: 4px 6px; font-size: 12px; }
+    .hidden { display: none !important; }
     .matrix-stack { display: flex; flex-direction: column; gap: 10px; }
     .modal-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: none; align-items: center; justify-content: center; z-index: 30; }
     .modal-backdrop.open { display: flex; }
@@ -102,6 +103,21 @@
         <label for="horizonDays">横に表示する営業日数</label>
         <input type="number" id="horizonDays" min="5" max="90" value="25">
       </div>
+      <div>
+        <label for="displayMode">?????</label>
+        <select id="displayMode">
+          <option value="daily" selected>??</option>
+          <option value="monthly">??</option>
+        </select>
+      </div>
+      <div>
+        <label for="monthlyStartMonth">???</label>
+        <input type="month" id="monthlyStartMonth">
+      </div>
+      <div>
+        <label for="horizonMonths">????</label>
+        <input type="number" id="horizonMonths" min="6" max="120" value="24">
+      </div>
       <label class="inline"><input type="checkbox" id="skipWeekend" checked> 土日を除外</label>
     </div>
     <label for="holidayList">追加休日（改行区切り / 例: 2026-02-11）</label>
@@ -115,7 +131,7 @@
     </div>
   </section>
 
-  <section class="card">
+  <section class="card" id="patternSection">
     <h2>2) 作業手順登録（工程色つき）</h2>
     <div class="row">
       <div>
@@ -140,7 +156,7 @@
     <div class="legend" id="legend"></div>
   </section>
 
-  <section class="card">
+  <section class="card" id="ordersSection">
     <h2>3) 注文登録（複数件）</h2>
     <div class="scroll"><table id="ordersTable">
       <thead><tr><th style="width:55px;">No</th><th class="reorder-col">並替</th><th>品名</th><th style="width:150px;">出荷日</th><th style="width:120px;">設定</th><th style="width:180px;">作業パターン</th><th style="width:80px;">削除</th></tr></thead>
@@ -149,6 +165,18 @@
     <div class="row" style="margin-top:8px;">
       <button id="addOrder" class="secondary">注文行追加</button>
       <button id="clearOrders" class="danger">注文をクリア</button>
+    </div>
+  </section>
+
+  <section class="card hidden" id="maintenanceSection">
+    <h2>3B) ???????????</h2>
+    <div class="scroll"><table id="maintenanceTable">
+      <thead><tr><th style="width:55px;">No</th><th class="reorder-col">??</th><th>???</th><th>???</th><th style="width:140px;">???</th><th style="width:120px;">??(?)</th><th style="width:100px;">?</th><th style="width:80px;">??</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <div class="row" style="margin-top:8px;">
+      <button id="addMaintenanceTask" class="secondary">?????</button>
+      <button id="clearMaintenanceTasks" class="danger">???????</button>
     </div>
   </section>
 
@@ -242,12 +270,14 @@
     patterns: {},
     state: {
       settings: {},
-      orders: []
+      orders: [],
+      maintenanceTasks: []
     },
     backups: {}
   };
   const stepsTbody = document.querySelector('#stepsTable tbody');
   const ordersTbody = document.querySelector('#ordersTable tbody');
+  const maintenanceTbody = document.querySelector('#maintenanceTable tbody');
   const resultEl = document.getElementById('result');
   const statusEl = document.getElementById('status');
   const scheduleModal = document.getElementById('scheduleModal');
@@ -698,10 +728,192 @@
     return order.dueDate || '';
   }
 
+
+  function monthValue(date) {
+    return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0');
+  }
+
+  function parseMonthValue(value) {
+    const parts = String(value || '').split('-');
+    if (parts.length !== 2) return null;
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+    return new Date(year, month - 1, 1);
+  }
+
+  function monthLabel(date) {
+    return date.getFullYear() + '/' + String(date.getMonth() + 1).padStart(2, '0');
+  }
+
+  function addMonths(base, months) {
+    return new Date(base.getFullYear(), base.getMonth() + months, 1);
+  }
+
+  function getDisplayMode() {
+    return document.getElementById('displayMode').value === 'monthly' ? 'monthly' : 'daily';
+  }
+
+  function updateDisplayModeUI() {
+    const isMonthly = getDisplayMode() === 'monthly';
+    document.getElementById('patternSection').classList.toggle('hidden', isMonthly);
+    document.getElementById('ordersSection').classList.toggle('hidden', isMonthly);
+    document.getElementById('maintenanceSection').classList.toggle('hidden', !isMonthly);
+    if (isMonthly && !maintenanceTbody.querySelector('tr')) {
+      addMaintenanceTaskRow({ itemName: '', taskName: '', startMonth: document.getElementById('monthlyStartMonth').value, intervalMonths: 12, color: '#60a5fa' });
+    }
+  }
+
+  function normalizeMaintenanceTask(raw) {
+    const safe = raw && typeof raw === 'object' ? raw : {};
+    return {
+      itemName: safe.itemName ? String(safe.itemName) : '',
+      taskName: safe.taskName ? String(safe.taskName) : '',
+      startMonth: safe.startMonth ? String(safe.startMonth) : '',
+      intervalMonths: Number(safe.intervalMonths) || 12,
+      color: safe.color ? String(safe.color) : '#60a5fa'
+    };
+  }
+
+  function addMaintenanceTaskRow(task) {
+    const normalized = normalizeMaintenanceTask(task);
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td class="maintenance-index"></td>' +
+      '<td class="reorder-col"><div class="reorder-group"><button type="button" class="secondary move-up" title="??">&uarr;</button><button type="button" class="secondary move-down" title="??">&darr;</button></div></td>' +
+      '<td><input class="maintenance-item" placeholder="???"></td>' +
+      '<td><input class="maintenance-task" placeholder="????"></td>' +
+      '<td><input type="month" class="maintenance-start"></td>' +
+      '<td><input type="number" class="maintenance-interval" min="1" step="1" value="12"></td>' +
+      '<td><input type="color" class="maintenance-color" value="#60a5fa"></td>' +
+      '<td><button type="button" class="danger del-maintenance">??</button></td>';
+    tr.querySelector('.maintenance-item').value = normalized.itemName;
+    tr.querySelector('.maintenance-task').value = normalized.taskName;
+    tr.querySelector('.maintenance-start').value = normalized.startMonth;
+    tr.querySelector('.maintenance-interval').value = normalized.intervalMonths;
+    tr.querySelector('.maintenance-color').value = normalized.color;
+    tr.querySelector('.del-maintenance').addEventListener('click', () => {
+      tr.remove();
+      refreshIndices(maintenanceTbody, '.maintenance-index');
+      saveAppState();
+    });
+    tr.querySelector('.move-up').addEventListener('click', () => moveRow(tr, -1, maintenanceTbody, '.maintenance-index', saveAppState));
+    tr.querySelector('.move-down').addEventListener('click', () => moveRow(tr, 1, maintenanceTbody, '.maintenance-index', saveAppState));
+    ['input', 'change'].forEach(eventName => {
+      tr.querySelector('.maintenance-item').addEventListener(eventName, saveAppState);
+      tr.querySelector('.maintenance-task').addEventListener(eventName, saveAppState);
+      tr.querySelector('.maintenance-start').addEventListener(eventName, saveAppState);
+      tr.querySelector('.maintenance-interval').addEventListener(eventName, saveAppState);
+      tr.querySelector('.maintenance-color').addEventListener(eventName, saveAppState);
+    });
+    maintenanceTbody.appendChild(tr);
+    refreshIndices(maintenanceTbody, '.maintenance-index');
+  }
+
+  function collectMaintenanceTasks(validate) {
+    const rows = [].slice.call(maintenanceTbody.querySelectorAll('tr')).map(tr => ({
+      itemName: tr.querySelector('.maintenance-item').value.trim(),
+      taskName: tr.querySelector('.maintenance-task').value.trim(),
+      startMonth: tr.querySelector('.maintenance-start').value,
+      intervalMonths: Number(tr.querySelector('.maintenance-interval').value),
+      color: tr.querySelector('.maintenance-color').value
+    }));
+    if (!validate) return rows;
+    const tasks = rows.filter(task => task.itemName || task.taskName || task.startMonth || task.intervalMonths);
+    if (!tasks.length) throw new Error('月次タスクを1件以上入力してください。');
+    tasks.forEach((task, index) => {
+      if (!task.itemName) throw new Error((index + 1) + '行目の物品名を入力してください。');
+      if (!task.taskName) throw new Error((index + 1) + '行目のタスク名を入力してください。');
+      if (!task.startMonth) throw new Error((index + 1) + '行目の開始月を入力してください。');
+      if (!Number.isFinite(task.intervalMonths) || task.intervalMonths <= 0) throw new Error((index + 1) + '行目の周期(月)は1以上にしてください。');
+    });
+    return tasks;
+  }
+
+  function collectMaintenanceTasksForState() {
+    return collectMaintenanceTasks(false);
+  }
+
+  function buildTimelineMonths(startMonth, count) {
+    const firstMonth = parseMonthValue(startMonth);
+    if (!firstMonth) throw new Error('表示開始月を入力してください。');
+    const months = [];
+    for (let i = 0; i < count; i++) months.push(addMonths(firstMonth, i));
+    return months;
+  }
+
+  function chunkMonthTimeline(months) {
+    const chunks = [];
+    for (let i = 0; i < months.length; i += 12) chunks.push(months.slice(i, i + 12));
+    return chunks;
+  }
+
+  function taskOccursInMonth(task, monthDate) {
+    const start = parseMonthValue(task.startMonth);
+    if (!start) return false;
+    const diff = (monthDate.getFullYear() - start.getFullYear()) * 12 + (monthDate.getMonth() - start.getMonth());
+    return diff >= 0 && diff % task.intervalMonths === 0;
+  }
+
+  function buildMonthlyMatrixTable(monthSlice, tasks) {
+    const table = document.createElement('table');
+    table.className = 'matrix';
+    const thead = document.createElement('thead');
+    const row = document.createElement('tr');
+    row.innerHTML = '<th class="left-col">?? / ???</th><th class="due-col">??? / ??</th>';
+    monthSlice.forEach(monthDate => {
+      const th = document.createElement('th');
+      th.textContent = monthLabel(monthDate);
+      row.appendChild(th);
+    });
+    thead.appendChild(row);
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    tasks.forEach(task => {
+      const tr = document.createElement('tr');
+      const nameCell = document.createElement('td');
+      nameCell.className = 'left-col';
+      nameCell.textContent = task.itemName + ' / ' + task.taskName;
+      tr.appendChild(nameCell);
+      const infoCell = document.createElement('td');
+      infoCell.className = 'due-col';
+      infoCell.textContent = task.startMonth + ' / ' + task.intervalMonths + 'M';
+      tr.appendChild(infoCell);
+      monthSlice.forEach(monthDate => {
+        const td = document.createElement('td');
+        if (taskOccursInMonth(task, monthDate)) {
+          td.style.background = task.color;
+          td.textContent = '*';
+          td.title = task.itemName + ' / ' + task.taskName;
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    return table;
+  }
+  function generateMonthly() {
+    const startMonth = document.getElementById('monthlyStartMonth').value;
+    const horizonMonths = Number(document.getElementById('horizonMonths').value);
+    if (!Number.isFinite(horizonMonths) || horizonMonths < 1) throw new Error('表示月数は1以上にしてください。');
+    const months = buildTimelineMonths(startMonth, horizonMonths);
+    const tasks = collectMaintenanceTasks(true);
+    const monthChunks = chunkMonthTimeline(months);
+    const stack = document.createElement('div');
+    stack.className = 'matrix-stack';
+    monthChunks.forEach(slice => stack.appendChild(buildMonthlyMatrixTable(slice, tasks)));
+    resultEl.innerHTML = '';
+    resultEl.appendChild(stack);
+    showStatus('???????????: ' + tasks.length + '? / ' + horizonMonths + '??');
+  }
+
   function getSettingsState() {
     return {
       startDate: document.getElementById('startDate').value,
       horizonDays: document.getElementById('horizonDays').value,
+      displayMode: document.getElementById('displayMode').value,
+      monthlyStartMonth: document.getElementById('monthlyStartMonth').value,
+      horizonMonths: document.getElementById('horizonMonths').value,
       skipWeekend: document.getElementById('skipWeekend').checked,
       holidayList: document.getElementById('holidayList').value,
       printCellWidth: document.getElementById('printCellWidth').value,
@@ -710,16 +922,15 @@
       printWrapDays: document.getElementById('printWrapDays').value
     };
   }
-
   function saveAppState() {
     const state = {
       settings: getSettingsState(),
-      orders: collectOrdersForState()
+      orders: collectOrdersForState(),
+      maintenanceTasks: collectMaintenanceTasksForState()
     };
     appData.state = state;
     persistSessionCache();
   }
-
   function loadAppState() {
     return appData.state && typeof appData.state === 'object' ? appData.state : {};
   }
@@ -729,6 +940,9 @@
     if (state.settings) {
       if (state.settings.startDate) document.getElementById('startDate').value = state.settings.startDate;
       if (state.settings.horizonDays) document.getElementById('horizonDays').value = state.settings.horizonDays;
+      if (state.settings.displayMode) document.getElementById('displayMode').value = state.settings.displayMode;
+      if (state.settings.monthlyStartMonth) document.getElementById('monthlyStartMonth').value = state.settings.monthlyStartMonth;
+      if (state.settings.horizonMonths) document.getElementById('horizonMonths').value = state.settings.horizonMonths;
       document.getElementById('skipWeekend').checked = state.settings.skipWeekend !== false;
       document.getElementById('holidayList').value = state.settings.holidayList || '';
       if (state.settings.printCellWidth) document.getElementById('printCellWidth').value = state.settings.printCellWidth;
@@ -742,8 +956,12 @@
       ordersTbody.innerHTML = '';
       state.orders.forEach(order => addOrderRow(order));
     }
+    maintenanceTbody.innerHTML = '';
+    if (Array.isArray(state.maintenanceTasks) && state.maintenanceTasks.length) {
+      state.maintenanceTasks.forEach(task => addMaintenanceTaskRow(task));
+    }
+    updateDisplayModeUI();
   }
-
   function loadBackups() {
     return appData.backups && typeof appData.backups === 'object' ? appData.backups : {};
   }
@@ -782,6 +1000,7 @@
   function normalizeImportedData(raw) {
     const safe = raw && typeof raw === 'object' ? raw : {};
     const rawOrders = safe.state && safe.state.orders;
+    const rawMaintenanceTasks = safe.state && safe.state.maintenanceTasks;
     return {
       patterns: safe.patterns && typeof safe.patterns === 'object' ? safe.patterns : {},
       state: safe.state && typeof safe.state === 'object'
@@ -794,13 +1013,15 @@
                   patternName: order && order.patternName ? String(order.patternName) : '',
                   schedule: normalizeOrderSchedule(order && order.schedule ? order.schedule : null)
                 }))
+              : [],
+            maintenanceTasks: Array.isArray(rawMaintenanceTasks)
+              ? rawMaintenanceTasks.map(task => normalizeMaintenanceTask(task))
               : []
           }
-        : { settings: {}, orders: [] },
+        : { settings: {}, orders: [], maintenanceTasks: [] },
       backups: safe.backups && typeof safe.backups === 'object' ? safe.backups : {}
     };
   }
-
   function exportJsonData() {
     saveAppState();
     const payload = {
@@ -842,6 +1063,8 @@
         restoreAppState();
         applyPrintSettings();
         if (!ordersTbody.querySelector('tr')) addOrderRow({ product: '', dueDate: '', patternName: selectedName || '標準' });
+        if (!maintenanceTbody.querySelector('tr')) addMaintenanceTaskRow({ itemName: '', taskName: '', startMonth: document.getElementById('monthlyStartMonth').value, intervalMonths: 12, color: '#60a5fa' });
+        updateDisplayModeUI();
         saveAppState();
         showStatus('JSON読込しました。');
       } catch (e) {
@@ -959,6 +1182,11 @@
   }
 
   function generate() {
+    if (getDisplayMode() === 'monthly') {
+      generateMonthly();
+      return;
+    }
+
     const map = loadPatterns();
     const activePatternName = document.getElementById('loadPattern').value;
     const activeDraftSteps = collectStepsSafe();
@@ -968,7 +1196,7 @@
     const holidaySet = parseHolidaySet();
 
     if (!startText) throw new Error('表示開始日を入力してください。');
-    if (!Number.isFinite(horizon) || horizon < 5) throw new Error('営業日数は5以上を入力してください。');
+    if (!Number.isFinite(horizon) || horizon < 5) throw new Error('営業日数は5以上にしてください。');
 
     const timelineDays = buildTimelineDays(new Date(startText), horizon, skipWeekend, holidaySet);
     const timelineStart = timelineDays[0];
@@ -986,9 +1214,8 @@
 
     resultEl.innerHTML = '';
     resultEl.appendChild(stack);
-    showStatus('生成完了: ' + orders.length + '件 / ' + horizon + '営業日を表示');
+    showStatus('日次スケジュールを表示: ' + orders.length + '件 / ' + horizon + '営業日');
   }
-
   document.getElementById('addStep').addEventListener('click', () => addStepRow());
   document.getElementById('applySample').addEventListener('click', () => {
     stepsTbody.innerHTML = '';
@@ -1034,6 +1261,17 @@
     saveAppState();
   });
 
+  document.getElementById('addMaintenanceTask').addEventListener('click', () => {
+    addMaintenanceTaskRow({ itemName: '', taskName: '', startMonth: document.getElementById('monthlyStartMonth').value, intervalMonths: 12, color: '#60a5fa' });
+    saveAppState();
+  });
+  document.getElementById('clearMaintenanceTasks').addEventListener('click', () => {
+    if (!window.confirm('月次タスクをすべて削除します。')) return;
+    maintenanceTbody.innerHTML = '';
+    addMaintenanceTaskRow({ itemName: '', taskName: '', startMonth: document.getElementById('monthlyStartMonth').value, intervalMonths: 12, color: '#60a5fa' });
+    showStatus('月次タスクをクリアしました');
+    saveAppState();
+  });
   document.getElementById('addOrder').addEventListener('click', () => { addOrderRow(); saveAppState(); });
   document.getElementById('clearOrders').addEventListener('click', () => {
     if (!window.confirm('登録済みの注文をすべて削除します。本当にいいですか？')) return;
@@ -1071,7 +1309,11 @@
   scheduleModal.addEventListener('click', e => {
     if (e.target === scheduleModal) closeScheduleModal();
   });
-  ['startDate', 'horizonDays', 'holidayList'].forEach(id => {
+  document.getElementById('displayMode').addEventListener('change', () => {
+    updateDisplayModeUI();
+    saveAppState();
+  });
+  ['startDate', 'horizonDays', 'holidayList', 'monthlyStartMonth', 'horizonMonths'].forEach(id => {
     document.getElementById(id).addEventListener('input', saveAppState);
   });
   document.getElementById('addHoliday').addEventListener('click', addHolidayFromPicker);
@@ -1090,6 +1332,7 @@
 
   const today = new Date();
   document.getElementById('startDate').value = toISO(today);
+  document.getElementById('monthlyStartMonth').value = monthValue(today);
 
   const restoredFromSession = restoreSessionCache();
 
@@ -1105,6 +1348,8 @@
   restoreAppState();
   applyPrintSettings();
   if (!ordersTbody.querySelector('tr')) addOrderRow({ product: '', dueDate: '', patternName: '標準' });
+  if (!maintenanceTbody.querySelector('tr')) addMaintenanceTaskRow({ itemName: '', taskName: '', startMonth: document.getElementById('monthlyStartMonth').value, intervalMonths: 12, color: '#60a5fa' });
+  updateDisplayModeUI();
   saveAppState();
   if (restoredFromSession) showStatus('ページ再読込のため一時キャッシュを復元しました。確定保存はJSON保存を使ってください。');
 
