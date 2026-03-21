@@ -855,11 +855,23 @@
   }
 
   function buildMonthlyMatrixTable(monthSlice, tasks) {
+    const items = [];
+    const itemMap = new Map();
+    tasks.forEach(task => {
+      const key = task.itemName;
+      if (!itemMap.has(key)) {
+        const item = { itemName: task.itemName, tasks: [] };
+        itemMap.set(key, item);
+        items.push(item);
+      }
+      itemMap.get(key).tasks.push(task);
+    });
+
     const table = document.createElement('table');
     table.className = 'matrix';
     const thead = document.createElement('thead');
     const row = document.createElement('tr');
-    row.innerHTML = '<th class="left-col">物品 / タスク</th><th class="due-col">開始月 / 周期</th>';
+    row.innerHTML = '<th class="left-col">\u7269\u54c1\u540d</th><th class="due-col">\u30bf\u30b9\u30af\u4e00\u89a7</th>';
     monthSlice.forEach(monthDate => {
       const th = document.createElement('th');
       th.textContent = monthLabel(monthDate);
@@ -867,28 +879,35 @@
     });
     thead.appendChild(row);
     table.appendChild(thead);
+
     const tbody = document.createElement('tbody');
-    tasks.forEach(task => {
+    items.forEach(item => {
       const tr = document.createElement('tr');
       const nameCell = document.createElement('td');
       nameCell.className = 'left-col';
-      nameCell.textContent = task.itemName + ' / ' + task.taskName;
+      nameCell.textContent = item.itemName;
       tr.appendChild(nameCell);
+
       const infoCell = document.createElement('td');
       infoCell.className = 'due-col';
-      infoCell.textContent = task.startMonth + ' / ' + task.intervalMonths + 'M';
+      infoCell.textContent = item.tasks.map(task => task.taskName).join(' / ');
+      infoCell.title = item.tasks.map(task => task.taskName + ' (' + task.startMonth + ' / ' + task.intervalMonths + 'M)').join('\n');
       tr.appendChild(infoCell);
+
       monthSlice.forEach(monthDate => {
         const td = document.createElement('td');
-        if (taskOccursInMonth(task, monthDate)) {
+        const matchedTasks = item.tasks.filter(task => taskOccursInMonth(task, monthDate));
+        const task = matchedTasks[0];
+        if (task) {
           td.style.background = task.color;
-          td.textContent = '*';
-          td.title = task.itemName + ' / ' + task.taskName;
+          td.textContent = task.taskName;
+          td.title = matchedTasks.map(hit => hit.taskName + ' (' + hit.startMonth + ' / ' + hit.intervalMonths + 'M)').join('\n');
         }
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
     });
+
     table.appendChild(tbody);
     return table;
   }
